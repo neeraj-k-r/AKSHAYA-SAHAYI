@@ -1,0 +1,37 @@
+{
+  "centers": [
+    {
+      "center_code": "HQ-001",
+      "email": "admin@akshaya.com",
+      "password_hash": "$2b$10$ghIb6BptWx5VAF5c9lnDpO1QKHS4zxlc03QUNS8eZcDrFsgwS.fMa",
+      "center_name": "Akshaya HQ",
+      "district": "Trivandrum",
+      "role": "superadmin"
+    },
+    {
+      "center_code": "EKM-1",
+      "email": "ekm1@gmail.com",
+      "password_hash": "$2b$10$aGB5FkupBRg4prrcYrsd9.bNvWekSp0mY5vQFDX717D7hFumnXaCC",
+      "center_name": "New Center",
+      "district": "Kerala",
+      "role": "center"
+    },
+    {
+      "center_code": "EKM2",
+      "email": "ek2@gmail.com",
+      "password_hash": "$2b$10$U4l545/lRsEXJzzYE9CKpuQl6WsCHQLHks/QSy5BxcBEJdO8LaPIC",
+      "center_name": "EKM2",
+      "district": "ERNAKULAM",
+      "role": "center"
+    },
+    {
+      "center_code": "EKM2",
+      "email": "ek2@gmail.com",
+      "password_hash": "$2b$10$ZMxah9o7IlTSSBUt/Y07lODrvr.Qiz2ZmioRmV86DBVs4k0tL.xV.",
+      "center_name": "EKM2",
+      "district": "ERNAKULAM",
+      "role": "center"
+    }
+  ],
+  "requests": []
+}

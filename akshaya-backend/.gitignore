@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment variables & secrets
+.env
+.env.local
+*.env
+
+# Local database fallback & temporary files
+local_db.json
+temp_*.jpg
+test_image.jpg
+*.jpg
+*.jpeg
+*.png
+
+# Logs
+*.log
+logs/

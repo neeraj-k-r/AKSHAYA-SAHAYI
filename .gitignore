@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment variables & secrets
+.env
+.env.*
+*.env
+**/.env
+
+# Local database & temp files
+local_db.json
+**/local_db.json
+*.jpg
+*.jpeg
+*.png
+temp_*.jpg
+test_image.jpg
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+**/dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Operating System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo

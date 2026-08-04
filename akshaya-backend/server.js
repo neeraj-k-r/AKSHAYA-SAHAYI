@@ -10,6 +10,94 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+app.post('/api/webhook/document-upload', async (req, res) => {
+    try {
+        // 1. Get the image URL and document type sent from Kapso/WhatsApp
+        // (Note: Adjust these variable names if Kapso labels them differently in your webhook setup)
+        const imageUrl = req.body.image_url;
+        const documentType = req.body.document_type || "Income Certificate";
+
+        if (!imageUrl) {
+            return res.status(400).json({ error: "No image URL provided" });
+        }
+
+        console.log(`🔍 Analyzing ${documentType} from URL: ${imageUrl}`);
+
+        // 2. Download the image and convert it to Base64 for Gemini Vision
+        const imageResponse = await fetch(imageUrl);
+        const imageBuffer = await imageResponse.arrayBuffer();
+        const base64Image = Buffer.from(imageBuffer).toString('base64');
+        const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+        // 3. VISION AI: Extract text, stamps, and details from the image
+        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
+
+        const imagePart = {
+            inlineData: {
+                data: base64Image,
+                mimeType: mimeType
+            }
+        };
+
+        const visionResult = await visionModel.generateContent([visionPrompt, imagePart]);
+        const extractedDetails = visionResult.response.text();
+        console.log("📝 Vision AI Extracted:", extractedDetails);
+
+        // 4. RAG RETRIEVAL: Find the specific rules for this document type
+        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embedResult = await embeddingModel.embedContent(documentType);
+        const queryEmbedding = embedResult.embedding.values;
+
+        // Search Supabase vector database for matching rules
+        const { data: matchedRules, error: rpcError } = await supabase.rpc('match_rules', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.5,
+            match_count: 2
+        });
+
+        if (rpcError) throw rpcError;
+
+        // Combine the retrieved rules into one text block
+        const rulesText = matchedRules.map(r => r.content).join('\n');
+        console.log("⚖️ Retrieved Rules:", rulesText);
+
+        // 5. LLM VERIFICATION: Compare the extracted image details against the rules
+        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const verificationPrompt = `
+      You are an Akshaya Center verification assistant.
+      
+      OFFICIAL RULES FOR THIS DOCUMENT:
+      ${rulesText}
+      
+      DETAILS EXTRACTED FROM UPLOADED IMAGE:
+      ${extractedDetails}
+      
+      Does the uploaded document meet ALL the official rules? 
+      Reply with either "✅ PASS:" or "❌ FAIL:" followed by a short, polite explanation for the citizen.
+    `;
+
+        const finalResult = await verificationModel.generateContent(verificationPrompt);
+        const finalDecision = finalResult.response.text();
+
+        console.log("🏁 Final Decision:", finalDecision);
+
+        // 6. Send the final decision back to Kapso
+        res.json({
+            success: true,
+            reply_message: finalDecision
+        });
+
+    } catch (error) {
+        console.error("❌ Document Verification Error:", error);
+        res.status(500).json({ error: "Failed to process document" });
+    }
+});
+
 app.use(cors());
 
 // ==========================================

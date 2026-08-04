@@ -11,97 +11,26 @@ const path = require('path');
 
 const app = express();
 
+// ==========================================
+// 1. CRITICAL FIX: MIDDLEWARE AT THE TOP
+// ==========================================
+app.use(cors());
+app.use(express.json()); // Fixes the "req.body is undefined" error
+
+// ==========================================
+// 2. AI & VECTOR DB SETUP (Gemini + Supabase)
+// ==========================================
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-app.post('/api/webhook/document-upload', async (req, res) => {
-    try {
-        // 1. Get the image URL and document type sent from Kapso/WhatsApp
-        // (Note: Adjust these variable names if Kapso labels them differently in your webhook setup)
-        const imageUrl = req.body.image_url;
-        const documentType = req.body.document_type || "Income Certificate";
-
-        if (!imageUrl) {
-            return res.status(400).json({ error: "No image URL provided" });
-        }
-
-        console.log(`🔍 Analyzing ${documentType} from URL: ${imageUrl}`);
-
-        // 2. Download the image and convert it to Base64 for Gemini Vision
-        const imageResponse = await fetch(imageUrl);
-        const imageBuffer = await imageResponse.arrayBuffer();
-        const base64Image = Buffer.from(imageBuffer).toString('base64');
-        const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
-
-        // 3. VISION AI: Extract text, stamps, and details from the image
-        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
-
-        const imagePart = {
-            inlineData: {
-                data: base64Image,
-                mimeType: mimeType
-            }
-        };
-
-        const visionResult = await visionModel.generateContent([visionPrompt, imagePart]);
-        const extractedDetails = visionResult.response.text();
-        console.log("📝 Vision AI Extracted:", extractedDetails);
-
-        // 4. RAG RETRIEVAL: Find the specific rules for this document type
-        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
-        const embedResult = await embeddingModel.embedContent(documentType);
-        const queryEmbedding = embedResult.embedding.values;
-
-        // Search Supabase vector database for matching rules
-        const { data: matchedRules, error: rpcError } = await supabase.rpc('match_rules', {
-            query_embedding: queryEmbedding,
-            match_threshold: 0.5,
-            match_count: 2
-        });
-
-        if (rpcError) throw rpcError;
-
-        // Combine the retrieved rules into one text block
-        const rulesText = matchedRules.map(r => r.content).join('\n');
-        console.log("⚖️ Retrieved Rules:", rulesText);
-
-        // 5. LLM VERIFICATION: Compare the extracted image details against the rules
-        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        const verificationPrompt = `
-      You are an Akshaya Center verification assistant.
-      
-      OFFICIAL RULES FOR THIS DOCUMENT:
-      ${rulesText}
-      
-      DETAILS EXTRACTED FROM UPLOADED IMAGE:
-      ${extractedDetails}
-      
-      Does the uploaded document meet ALL the official rules? 
-      Reply with either "✅ PASS:" or "❌ FAIL:" followed by a short, polite explanation for the citizen.
-    `;
-
-        const finalResult = await verificationModel.generateContent(verificationPrompt);
-        const finalDecision = finalResult.response.text();
-
-        console.log("🏁 Final Decision:", finalDecision);
-
-        // 6. Send the final decision back to Kapso
-        res.json({
-            success: true,
-            reply_message: finalDecision
-        });
-
-    } catch (error) {
-        console.error("❌ Document Verification Error:", error);
-        res.status(500).json({ error: "Failed to process document" });
-    }
-});
-
-app.use(cors());
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY
+);
 
 // ==========================================
-// 1. TOOL CONFIGURATIONS & DB SETUP
+// 3. TOOL CONFIGURATIONS & DB SETUP
 // ==========================================
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -144,9 +73,6 @@ function loadLocalDb() {
 const localData = loadLocalDb();
 const fallbackCenters = localData.centers;
 const fallbackRequests = localData.requests;
-function saveLocalDb() {
-    try { fs.writeFileSync(DB_FILE, JSON.stringify({ centers: fallbackCenters, requests: fallbackRequests }, null, 2)); } catch (e) { }
-}
 
 const authenticateToken = (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -158,12 +84,188 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// ==========================================
-// 2. KAPSO WEBHOOK ENDPOINT (Document Upload)
-// ==========================================
-app.post('/api/webhook/document-upload', express.raw({ type: 'application/json' }), async (req, res) => {
+// =========================================================================
+// DASHBOARD API: SAVE RULE & GENERATE EMBEDDINGS
+// =========================================================================
+app.post('/api/add-rule', async (req, res) => {
     try {
-        const payload = JSON.parse(req.body.toString());
+        const { documentType, content, centerId } = req.body;
+
+        if (!content || !centerId) {
+            return res.status(400).json({ error: "Missing content or centerId" });
+        }
+
+        console.log(`🌱 Generating embedding for [${documentType}] (Center: ${centerId})...`);
+
+        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embedResult = await embeddingModel.embedContent(content);
+        const vector = embedResult.embedding.values;
+
+        const { data, error } = await supabase
+            .from('document_rules')
+            .insert([
+                {
+                    document_type: documentType,
+                    content: content,
+                    embedding: vector,
+                    center_id: centerId
+                }
+            ]);
+
+        if (error) throw error;
+
+        console.log("✅ Saved to vector database!");
+        res.json({ success: true, message: "Rule successfully stored in vector database!" });
+
+    } catch (error) {
+        console.error("❌ Add Rule Error:", error);
+        res.status(500).json({ error: "Failed to store rule" });
+    }
+});
+
+// =========================================================================
+// KAPSO WEBHOOK: CHAT & RAG KNOWLEDGE BASE QUERY
+// =========================================================================
+app.post('/api/webhook/chat', async (req, res) => {
+    try {
+        const userMessage = req.body.message;
+        const centerId = req.body.center_id || "center_123";
+
+        if (!userMessage) {
+            return res.status(400).json({ reply_message: "Please enter a message." });
+        }
+
+        console.log(`💬 User Query: "${userMessage}" | Center: ${centerId}`);
+
+        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embedResult = await embeddingModel.embedContent(userMessage);
+        const queryEmbedding = embedResult.embedding.values;
+
+        const { data: matchedRules, error: rpcError } = await supabase.rpc('match_center_rules', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.4,
+            match_count: 3,
+            p_center_id: centerId
+        });
+
+        if (rpcError) throw rpcError;
+
+        const rulesText = matchedRules && matchedRules.length > 0
+            ? matchedRules.map(r => r.content).join('\n')
+            : "No specific center guidelines found for this query.";
+
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const prompt = `
+      You are an assistant for Akshaya Center (${centerId}).
+      
+      OFFICIAL CENTER GUIDELINES:
+      ${rulesText}
+      
+      CITIZEN QUESTION:
+      "${userMessage}"
+      
+      Instructions: Answer the citizen's question politely and accurately using ONLY the guidelines provided above. If the guidelines do not contain enough information, politely inform the user to visit the center directly.
+    `;
+
+        const aiResult = await chatModel.generateContent(prompt);
+        const finalReply = aiResult.response.text();
+
+        res.json({
+            success: true,
+            reply_message: finalReply
+        });
+
+    } catch (error) {
+        console.error("❌ Chat Webhook Error:", error);
+        res.status(500).json({ reply_message: "Sorry, I am having trouble fetching the center information right now." });
+    }
+});
+
+// =========================================================================
+// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION
+// =========================================================================
+app.post('/api/webhook/document-upload', async (req, res) => {
+    try {
+        const imageUrl = req.body.image_url;
+        const documentType = req.body.document_type || "Income Certificate";
+
+        if (!imageUrl) {
+            return res.status(400).json({ error: "No image URL provided" });
+        }
+
+        console.log(`🔍 Analyzing ${documentType} from URL: ${imageUrl}`);
+
+        const imageResponse = await fetch(imageUrl);
+        const imageBuffer = await imageResponse.arrayBuffer();
+        const base64Image = Buffer.from(imageBuffer).toString('base64');
+        const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
+
+        const imagePart = {
+            inlineData: {
+                data: base64Image,
+                mimeType: mimeType
+            }
+        };
+
+        const visionResult = await visionModel.generateContent([visionPrompt, imagePart]);
+        const extractedDetails = visionResult.response.text();
+        console.log("📝 Vision AI Extracted:", extractedDetails);
+
+        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embedResult = await embeddingModel.embedContent(documentType);
+        const queryEmbedding = embedResult.embedding.values;
+
+        const { data: matchedRules, error: rpcError } = await supabase.rpc('match_rules', {
+            query_embedding: queryEmbedding,
+            match_threshold: 0.5,
+            match_count: 2
+        });
+
+        if (rpcError) throw rpcError;
+
+        const rulesText = matchedRules ? matchedRules.map(r => r.content).join('\n') : "";
+        console.log("⚖️ Retrieved Rules:", rulesText);
+
+        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const verificationPrompt = `
+      You are an Akshaya Center verification assistant.
+      
+      OFFICIAL RULES FOR THIS DOCUMENT:
+      ${rulesText}
+      
+      DETAILS EXTRACTED FROM UPLOADED IMAGE:
+      ${extractedDetails}
+      
+      Does the uploaded document meet ALL the official rules? 
+      Reply with either "✅ PASS:" or "❌ FAIL:" followed by a short, polite explanation for the citizen.
+    `;
+
+        const finalResult = await verificationModel.generateContent(verificationPrompt);
+        const finalDecision = finalResult.response.text();
+
+        console.log("🏁 Final Decision:", finalDecision);
+
+        res.json({
+            success: true,
+            reply_message: finalDecision
+        });
+
+    } catch (error) {
+        console.error("❌ Document Verification Error:", error);
+        res.status(500).json({ error: "Failed to process document" });
+    }
+});
+
+// ==========================================
+// LEGACY CLOUDINARY UPLOAD WEBHOOK 
+// (Renamed so it doesn't conflict with RAG webhook above)
+// ==========================================
+app.post('/api/webhook/document-upload-legacy', async (req, res) => {
+    try {
+        const payload = req.body;
         const phone_number = payload.message?.from || payload.conversation?.phone_number;
         const imageUrl = payload.message?.image?.link || payload.message?.kapso?.media_url;
 
@@ -206,12 +308,7 @@ app.post('/api/webhook/document-upload', express.raw({ type: 'application/json' 
 });
 
 // ==========================================
-// 3. APPLY STANDARD JSON PARSING FOR REST OF APP
-// ==========================================
-app.use(express.json());
-
-// ==========================================
-// 4. STANDARD API ENDPOINTS
+// STANDARD API ENDPOINTS
 // ==========================================
 app.get('/api/public/centers', async (req, res) => {
     try {
@@ -229,15 +326,11 @@ app.get('/api/public/centers', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// ==========================================
-// 5. NEW: KAPSO DYNAMIC MENU TRIGGER
-// ==========================================
 app.post('/api/bot/send-centers-menu', async (req, res) => {
     try {
         const { phone } = req.body;
         if (!phone) return res.status(400).json({ error: "Phone number is required" });
 
-        // Fetch up to 10 centers (WhatsApp strict limit for list rows)
         let centersList = [];
         if (isDbConnected) {
             try {
@@ -247,14 +340,12 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
         }
         if (centersList.length === 0) centersList = fallbackCenters.slice(0, 10);
 
-        // Format exactly how WhatsApp expects it
         const kapsoOptions = centersList.map(c => ({
             id: c.center_code,
-            title: (c.center_name || c.center_code).substring(0, 24), // Max 24 chars
-            description: `District: ${c.district}`.substring(0, 72) // Max 72 chars
+            title: (c.center_name || c.center_code).substring(0, 24),
+            description: `District: ${c.district}`.substring(0, 72)
         }));
 
-        // Build the WhatsApp Payload
         const payload = {
             "messaging_product": "whatsapp",
             "to": phone,
@@ -271,7 +362,6 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
             }
         };
 
-        // Send payload through Kapso API
         const kapsoUrl = `https://api.kapso.ai/meta/whatsapp/v24.0/${process.env.KAPSO_PHONE_ID}/messages`;
         const kapsoRes = await fetch(kapsoUrl, {
             method: 'POST',
@@ -295,10 +385,11 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-// Health check route for UptimeRobot
+
 app.get('/health', (req, res) => {
     res.status(200).send('Bot is healthy and awake!');
 });
+
 app.post('/api/auth/login', async (req, res) => { /* Auth logic intact */ });
 app.post('/api/admin/create-center', authenticateToken, async (req, res) => { /* Create logic intact */ });
 app.get('/api/dashboard/requests', authenticateToken, async (req, res) => { /* Dashboard logic intact */ });

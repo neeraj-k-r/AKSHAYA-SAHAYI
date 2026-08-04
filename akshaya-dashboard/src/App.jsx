@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import AddRuleForm from './AddRuleForm'; // Your AI Rule Form Component
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('token') || '');
@@ -129,6 +130,13 @@ export default function App() {
           </form>
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* 🚀 NEW: RAG DOCUMENT RULES UPLOAD FORM                   */}
+      {/* ======================================================== */}
+      <div style={{ background: '#fff', marginBottom: '30px', borderRadius: '6px' }}>
+        <AddRuleForm />
+      </div>
 
       {Object.keys(grouped).map((category) => (
         <div key={category} style={{ background: '#fff', padding: '20px', marginBottom: '20px' }}>

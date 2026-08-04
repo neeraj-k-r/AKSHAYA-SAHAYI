@@ -12,10 +12,10 @@ const path = require('path');
 const app = express();
 
 // ==========================================
-// 1. CRITICAL FIX: MIDDLEWARE AT THE TOP
+// 1. MIDDLEWARE
 // ==========================================
 app.use(cors());
-app.use(express.json()); // Fixes the "req.body is undefined" error
+app.use(express.json());
 
 // ==========================================
 // 2. AI & VECTOR DB SETUP (Gemini + Supabase)
@@ -261,7 +261,6 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
 // ==========================================
 // LEGACY CLOUDINARY UPLOAD WEBHOOK 
-// (Renamed so it doesn't conflict with RAG webhook above)
 // ==========================================
 app.post('/api/webhook/document-upload-legacy', async (req, res) => {
     try {
@@ -305,6 +304,58 @@ app.post('/api/webhook/document-upload-legacy', async (req, res) => {
         }
         res.status(200).send('OK');
     } catch (error) { res.status(500).send('Internal Server Error'); }
+});
+
+// ==========================================
+// DASHBOARD & AUTHENTICATION ENDPOINTS
+// ==========================================
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // Hardcoded superadmin login for testing
+        if (email === 'admin@akshaya.com') {
+            const token = jwt.sign({ email, role: 'superadmin' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
+            return res.json({ token, role: 'superadmin' });
+        }
+
+        // Database login for standard centers
+        const result = await db.query('SELECT * FROM akshaya_centers WHERE email = $1', [email]);
+        if (result.rows.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
+
+        const user = result.rows[0];
+        const validPass = await bcrypt.compare(password, user.password_hash);
+        if (!validPass) return res.status(401).json({ message: 'Invalid credentials' });
+
+        const token = jwt.sign({ email: user.email, role: user.role }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
+        res.json({ token, role: user.role });
+    } catch (error) {
+        console.error("Login Error:", error);
+        res.status(500).json({ message: "Internal server error during login" });
+    }
+});
+
+app.post('/api/admin/create-center', authenticateToken, async (req, res) => {
+    try {
+        const { center_code, center_name, district, email, password } = req.body;
+        const hash = await bcrypt.hash(password, 10);
+        await db.query(
+            `INSERT INTO akshaya_centers (center_code, center_name, district, email, password_hash, role) VALUES ($1, $2, $3, $4, $5, 'admin')`,
+            [center_code, center_name, district, email, hash]
+        );
+        res.json({ message: 'Center created successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
+    try {
+        const result = await db.query('SELECT * FROM service_requests ORDER BY created_at DESC');
+        res.json(result.rows);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // ==========================================
@@ -389,10 +440,6 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
 app.get('/health', (req, res) => {
     res.status(200).send('Bot is healthy and awake!');
 });
-
-app.post('/api/auth/login', async (req, res) => { /* Auth logic intact */ });
-app.post('/api/admin/create-center', authenticateToken, async (req, res) => { /* Create logic intact */ });
-app.get('/api/dashboard/requests', authenticateToken, async (req, res) => { /* Dashboard logic intact */ });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

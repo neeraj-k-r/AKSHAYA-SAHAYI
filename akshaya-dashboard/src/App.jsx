@@ -22,18 +22,27 @@ export default function App() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    const res = await fetch('http://localhost:5000/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (data.token) {
-      localStorage.setItem('token', data.token);
-      localStorage.setItem('role', data.role);
-      setToken(data.token);
-      setRole(data.role);
-    } else alert(data.message);
+    try {
+      const res = await fetch('http://localhost:5000/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('role', data.role);
+        setToken(data.token);
+        setRole(data.role);
+      } else {
+        alert(data.message || "Invalid login credentials");
+      }
+    } catch (error) {
+      console.error("Login Error:", error);
+      alert("❌ Network Error: Could not connect to the backend server. Make sure your local Node.js server is running (node server.js)!");
+    }
   };
 
   const handleCreateCenter = async (e) => {

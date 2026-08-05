@@ -155,7 +155,7 @@ app.post('/api/webhook/chat', async (req, res) => {
             : "";
 
         // UPDATED: Fixed 404 Model Error
-        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
         // UPDATED: Strict Center-Specific System Prompt
         const prompt = `

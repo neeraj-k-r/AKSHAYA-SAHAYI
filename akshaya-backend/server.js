@@ -152,20 +152,27 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         const rulesText = matchedRules && matchedRules.length > 0
             ? matchedRules.map(r => r.content).join('\n')
-            : "No specific center guidelines found for this query.";
+            : "";
 
-        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // UPDATED: Fixed 404 Model Error
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
+        // UPDATED: Strict Center-Specific System Prompt
         const prompt = `
-      You are an assistant for Akshaya Center (${centerId}).
-      
-      OFFICIAL CENTER GUIDELINES:
-      ${rulesText}
-      
-      CITIZEN QUESTION:
-      "${userMessage}"
-      
-      Instructions: Answer the citizen's question politely and accurately using ONLY the guidelines provided above. If the guidelines do not contain enough information, politely inform the user to visit the center directly.
-    `;
+        You are a highly accurate virtual assistant for an Akshaya Center. 
+        A citizen is asking for the following service: "${userMessage}"
+
+        Here are the STRICT, center-specific rules and required documents for this service at their chosen center:
+        """
+        ${rulesText}
+        """
+
+        YOUR INSTRUCTIONS:
+        1. Based ONLY on the rules provided in the text above, list the exact required documents the citizen needs to upload.
+        2. Format the response cleanly as a bulleted list for WhatsApp.
+        3. If the rules above are empty or do not mention the required documents for this service, politely state: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
+        4. DO NOT invent, guess, or add any documents that are not explicitly stated in the text above.
+        `;
 
         const aiResult = await chatModel.generateContent(prompt);
         const finalReply = aiResult.response.text();
@@ -200,7 +207,8 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
-        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // UPDATED: Fixed 404 Model Error
+        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
 
         const imagePart = {
@@ -229,7 +237,8 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const rulesText = matchedRules ? matchedRules.map(r => r.content).join('\n') : "";
         console.log("⚖️ Retrieved Rules:", rulesText);
 
-        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        // UPDATED: Fixed 404 Model Error
+        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const verificationPrompt = `
       You are an Akshaya Center verification assistant.
       

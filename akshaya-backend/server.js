@@ -154,10 +154,9 @@ app.post('/api/webhook/chat', async (req, res) => {
             ? matchedRules.map(r => r.content).join('\n')
             : "";
 
-        // UPDATED: Fixed 404 Model Error
-        const chatModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        // FIXED: Using stable gemini-2.5-flash model
+        const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
-        // UPDATED: Strict Center-Specific System Prompt
         const prompt = `
         You are a highly accurate virtual assistant for an Akshaya Center. 
         A citizen is asking for the following service: "${userMessage}"
@@ -207,8 +206,8 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
-        // UPDATED: Fixed 404 Model Error
-        const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        // FIXED: Using stable gemini-2.5-flash model
+        const visionModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
 
         const imagePart = {
@@ -237,8 +236,8 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const rulesText = matchedRules ? matchedRules.map(r => r.content).join('\n') : "";
         console.log("⚖️ Retrieved Rules:", rulesText);
 
-        // UPDATED: Fixed 404 Model Error
-        const verificationModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        // FIXED: Using stable gemini-2.5-flash model
+        const verificationModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const verificationPrompt = `
       You are an Akshaya Center verification assistant.
       
@@ -322,13 +321,11 @@ app.post('/api/auth/login', async (req, res) => {
     try {
         const { email, password } = req.body;
 
-        // Hardcoded superadmin login for testing
         if (email === 'admin@akshaya.com') {
             const token = jwt.sign({ email, role: 'superadmin' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
             return res.json({ token, role: 'superadmin' });
         }
 
-        // Database login for standard centers
         const result = await db.query('SELECT * FROM akshaya_centers WHERE email = $1', [email]);
         if (result.rows.length === 0) return res.status(401).json({ message: 'Invalid credentials' });
 

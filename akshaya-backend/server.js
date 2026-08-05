@@ -127,63 +127,95 @@ app.post('/api/add-rule', async (req, res) => {
 // KAPSO WEBHOOK: CHAT & RAG KNOWLEDGE BASE QUERY
 // =========================================================================
 app.post('/api/webhook/chat', async (req, res) => {
+    console.log("========== CHAT WEBHOOK ==========");
+    console.log("BODY RECEIVED:");
+    console.log(JSON.stringify(req.body, null, 2));
+
     try {
-        const userMessage = req.body.message;
-        const centerId = req.body.center_id || "center_123";
+        const userMessage =
+            req.body.message ||
+            req.body.text ||
+            req.body.query ||
+            "";
+
+        const centerId =
+            req.body.center_id ||
+            req.body.center ||
+            "center_123";
 
         if (!userMessage) {
-            return res.status(400).json({ reply_message: "Please enter a message." });
+            return res.json({
+                success: false,
+                reply_message: "Please select a service."
+            });
         }
 
         console.log(`💬 User Query: "${userMessage}" | Center: ${centerId}`);
 
-        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embeddingModel = genAI.getGenerativeModel({
+            model: "gemini-embedding-2"
+        });
+
         const embedResult = await embeddingModel.embedContent(userMessage);
         const queryEmbedding = embedResult.embedding.values;
 
-        const { data: matchedRules, error: rpcError } = await supabase.rpc('match_center_rules', {
-            query_embedding: queryEmbedding,
-            match_threshold: 0.4,
-            match_count: 3,
-            p_center_id: centerId
-        });
+        const { data: matchedRules, error: rpcError } =
+            await supabase.rpc('match_center_rules', {
+                query_embedding: queryEmbedding,
+                match_threshold: 0.4,
+                match_count: 3,
+                p_center_id: centerId
+            });
 
         if (rpcError) throw rpcError;
 
-        const rulesText = matchedRules && matchedRules.length > 0
-            ? matchedRules.map(r => r.content).join('\n')
-            : "";
+        const rulesText =
+            matchedRules && matchedRules.length > 0
+                ? matchedRules.map(r => r.content).join('\n')
+                : "";
 
-        // FIXED: Using stable gemini-2.5-flash model
-        const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+        console.log("📋 Rules Found:", matchedRules?.length || 0);
+
+        const chatModel = genAI.getGenerativeModel({
+            model: "gemini-2.5-flash"
+        });
 
         const prompt = `
-        You are a highly accurate virtual assistant for an Akshaya Center. 
-        A citizen is asking for the following service: "${userMessage}"
+You are an Akshaya Center assistant.
 
-        Here are the STRICT, center-specific rules and required documents for this service at their chosen center:
-        """
-        ${rulesText}
-        """
+Citizen Request:
+${userMessage}
 
-        YOUR INSTRUCTIONS:
-        1. Based ONLY on the rules provided in the text above, list the exact required documents the citizen needs to upload.
-        2. Format the response cleanly as a bulleted list for WhatsApp.
-        3. If the rules above are empty or do not mention the required documents for this service, politely state: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
-        4. DO NOT invent, guess, or add any documents that are not explicitly stated in the text above.
-        `;
+Center Rules:
+${rulesText}
+
+Instructions:
+1. List only the required documents.
+2. Use bullet points.
+3. If no rules are found, say:
+"I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
+4. Do not invent documents.
+`;
 
         const aiResult = await chatModel.generateContent(prompt);
         const finalReply = aiResult.response.text();
 
-        res.json({
+        console.log("✅ AI Reply Generated");
+
+        return res.json({
             success: true,
             reply_message: finalReply
         });
 
     } catch (error) {
-        console.error("❌ Chat Webhook Error:", error);
-        res.status(500).json({ reply_message: "Sorry, I am having trouble fetching the center information right now." });
+        console.error("❌ Chat Webhook Error:");
+        console.error(error);
+
+        return res.json({
+            success: false,
+            reply_message:
+                "Sorry, I am having trouble fetching the center information right now."
+        });
     }
 });
 

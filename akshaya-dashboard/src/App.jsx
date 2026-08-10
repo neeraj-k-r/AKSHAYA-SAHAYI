@@ -34,6 +34,10 @@ export default function App() {
       if (data.token) {
         localStorage.setItem('token', data.token);
         localStorage.setItem('role', data.role);
+
+        // ✅ THE FIX: This line catches the center_code and saves it!
+        localStorage.setItem('center_code', data.center_code);
+
         setToken(data.token);
         setRole(data.role);
       } else {

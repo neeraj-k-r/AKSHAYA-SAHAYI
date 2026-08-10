@@ -74,11 +74,23 @@ const localData = loadLocalDb();
 const fallbackCenters = localData.centers;
 const fallbackRequests = localData.requests;
 
+// ==========================================
+// 4. AUTHENTICATION MIDDLEWARE
+// ==========================================
 const authenticateToken = (req, res, next) => {
-    const token = req.headers['authorization']?.split(' ')[1];
-    if (!token) return res.sendStatus(401);
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+        console.log("❌ Authentication Failed: No token provided in headers");
+        return res.status(401).send("Unauthorized: No token provided");
+    }
+
     jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret', (err, user) => {
-        if (err) return res.sendStatus(403);
+        if (err) {
+            console.error("❌ JWT Verification Failed:", err.message);
+            return res.status(403).send(`Forbidden: ${err.message}`);
+        }
         req.user = user;
         next();
     });
@@ -132,16 +144,12 @@ app.post('/api/webhook/chat', async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
 
     try {
-        const userMessage =
-            req.body.message ||
-            req.body.text ||
-            req.body.query ||
-            "";
+        // FIXED: Stripping "Selected:" from Kapso's list/button replies
+        const userMessageRaw = req.body.message || req.body.text || req.body.query || "";
+        const userMessage = userMessageRaw.replace(/Selected:\s*/i, "").trim();
 
-        const centerId =
-            req.body.center_id ||
-            req.body.center ||
-            "center_123";
+        const centerIdRaw = req.body.center_id || req.body.center || "center_123";
+        const centerId = centerIdRaw.replace(/Selected:\s*/i, "").trim();
 
         if (!userMessage) {
             return res.json({
@@ -150,7 +158,7 @@ app.post('/api/webhook/chat', async (req, res) => {
             });
         }
 
-        console.log(`💬 User Query: "${userMessage}" | Center: ${centerId}`);
+        console.log(`💬 User Query: "${userMessage}" | Center: "${centerId}"`);
 
         const embeddingModel = genAI.getGenerativeModel({
             model: "gemini-embedding-2"
@@ -238,7 +246,6 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
-        // FIXED: Using stable gemini-2.5-flash model
         const visionModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
 
@@ -268,7 +275,6 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const rulesText = matchedRules ? matchedRules.map(r => r.content).join('\n') : "";
         console.log("⚖️ Retrieved Rules:", rulesText);
 
-        // FIXED: Using stable gemini-2.5-flash model
         const verificationModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const verificationPrompt = `
       You are an Akshaya Center verification assistant.

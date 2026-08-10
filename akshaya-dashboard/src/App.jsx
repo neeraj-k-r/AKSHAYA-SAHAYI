@@ -72,7 +72,14 @@ export default function App() {
       fetch('http://localhost:5000/api/dashboard/requests', {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-        .then(res => res.json())
+        .then(async (res) => {
+          // Check if the response is OK before parsing JSON
+          if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Error ${res.status}: ${errorText}`);
+          }
+          return res.json();
+        })
         .then(data => {
           if (Array.isArray(data)) {
             setRequests(data);

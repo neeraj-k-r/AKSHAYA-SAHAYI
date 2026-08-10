@@ -433,37 +433,51 @@ app.get('/api/public/centers', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-app.post('/api/bot/send-centers-menu', async (req, res) => {
+app.post('/api/bot/send-services-menu', async (req, res) => {
     try {
-        const { phone } = req.body;
+        const { phone, center_id } = req.body;
         if (!phone) return res.status(400).json({ error: "Phone number is required" });
 
-        let centersList = [];
-        if (isDbConnected) {
-            try {
-                const result = await db.query('SELECT center_code, center_name, district FROM akshaya_centers ORDER BY center_name ASC LIMIT 10');
-                centersList = result.rows;
-            } catch (dbErr) { }
-        }
-        if (centersList.length === 0) centersList = fallbackCenters.slice(0, 10);
+        // Clean center ID (just in case Kapso sends "Selected: TST1")
+        const cleanCenterId = (center_id || "").replace(/Selected:\s*/i, "").trim();
+        console.log(`🔍 Fetching dynamic services for center: ${cleanCenterId}`);
 
-        const kapsoOptions = centersList.map(c => ({
-            id: c.center_code,
-            title: (c.center_name || c.center_code).substring(0, 24),
-            description: `District: ${c.district}`.substring(0, 72)
+        // Query Supabase for this specific center's documents
+        const { data, error } = await supabase
+            .from('document_rules')
+            .select('document_type')
+            .eq('center_id', cleanCenterId);
+
+        if (error) throw error;
+
+        // Extract unique document types (removes duplicates)
+        let uniqueServices = [...new Set(data.map(item => item.document_type))];
+
+        // Fallback: If the center hasn't added any rules yet, show defaults
+        if (uniqueServices.length === 0) {
+            console.log("⚠️ No services found for this center. Sending default options.");
+            uniqueServices = ["Income Certificate", "Ration Card"];
+        }
+
+        // Convert array into Kapso List format
+        const kapsoOptions = uniqueServices.slice(0, 10).map((service) => ({
+            id: service.substring(0, 24), // We use the name as ID so the AI reads it perfectly later
+            title: service.substring(0, 24),
+            description: `Apply for ${service}`.substring(0, 72)
         }));
 
+        // Build Kapso Payload
         const payload = {
             "messaging_product": "whatsapp",
             "to": phone,
             "type": "interactive",
             "interactive": {
                 "type": "list",
-                "body": { "text": "Great! Please select your designated Akshaya Center:" },
+                "body": { "text": "What service do you need?" },
                 "action": {
-                    "button": "View Centers",
+                    "button": "View Services",
                     "sections": [
-                        { "title": "Available Centers", "rows": kapsoOptions }
+                        { "title": "Available Services", "rows": kapsoOptions }
                     ]
                 }
             }
@@ -481,14 +495,14 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
 
         if (!kapsoRes.ok) {
             console.error("🔥 Kapso API Error:", await kapsoRes.text());
-            return res.status(500).json({ error: "Failed to push message via Kapso" });
+            return res.status(500).json({ error: "Failed to push dynamic services via Kapso" });
         }
 
-        console.log(`✅ Dynamically pushed Centers Menu to ${phone}`);
-        res.json({ success: true, message: "Menu sent!" });
+        console.log(`✅ Dynamically pushed Services Menu to ${phone}`);
+        res.json({ success: true, message: "Dynamic Services Menu sent!" });
 
     } catch (error) {
-        console.error("🔥 SEND MENU ERROR: ", error);
+        console.error("🔥 SEND SERVICES MENU ERROR: ", error);
         res.status(500).json({ error: error.message });
     }
 });

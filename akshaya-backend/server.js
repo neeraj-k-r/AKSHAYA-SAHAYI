@@ -370,7 +370,8 @@ app.post('/api/auth/login', async (req, res) => {
 
         if (email === 'admin@akshaya.com') {
             const token = jwt.sign({ email, role: 'superadmin' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
-            return res.json({ token, role: 'superadmin' });
+            // ✅ FIX: Added center_code to superadmin response
+            return res.json({ token, role: 'superadmin', center_code: 'HQ-001' });
         }
 
         const result = await db.query('SELECT * FROM akshaya_centers WHERE email = $1', [email]);
@@ -381,7 +382,9 @@ app.post('/api/auth/login', async (req, res) => {
         if (!validPass) return res.status(401).json({ message: 'Invalid credentials' });
 
         const token = jwt.sign({ email: user.email, role: user.role }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
-        res.json({ token, role: user.role });
+
+        // ✅ FIX: Added center_code to standard login response
+        res.json({ token, role: user.role, center_code: user.center_code });
     } catch (error) {
         console.error("Login Error:", error);
         res.status(500).json({ message: "Internal server error during login" });

@@ -1,6 +1,16 @@
 {
   "dependencies": {
     "axios": "^1.19.0",
-    "cloudinary": "^2.10.0"
+    "@google/generative-ai": "latest",
+    "cloudinary": "^2.10.0",
+    "firebase": "^10.12.0"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "scripts": {
+    "dev:frontend": "vite",
+    "dev:backend": "cd backend && npm run dev",
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\""
   }
 }

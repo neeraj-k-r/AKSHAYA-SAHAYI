@@ -144,7 +144,6 @@ app.post('/api/webhook/chat', async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
 
     try {
-        // FIXED: Stripping "Selected:" from Kapso's list/button replies
         const userMessageRaw = req.body.message || req.body.text || req.body.query || "";
         const userMessage = userMessageRaw.replace(/Selected:\s*/i, "").trim();
 
@@ -184,7 +183,6 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         console.log("📋 Rules Found:", matchedRules?.length || 0);
 
-        // THE HARD-STOP: If no rules are found in the database, bypass the AI completely!
         if (!rulesText || rulesText.trim() === "") {
             console.log("⚠️ No rules found in DB. Bypassing AI to prevent hallucination.");
             return res.json({
@@ -370,7 +368,6 @@ app.post('/api/auth/login', async (req, res) => {
 
         if (email === 'admin@akshaya.com') {
             const token = jwt.sign({ email, role: 'superadmin' }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
-            // ✅ FIX: Added center_code to superadmin response
             return res.json({ token, role: 'superadmin', center_code: 'HQ-001' });
         }
 
@@ -382,8 +379,6 @@ app.post('/api/auth/login', async (req, res) => {
         if (!validPass) return res.status(401).json({ message: 'Invalid credentials' });
 
         const token = jwt.sign({ email: user.email, role: user.role }, process.env.JWT_SECRET || 'fallback_secret', { expiresIn: '12h' });
-
-        // ✅ FIX: Added center_code to standard login response
         res.json({ token, role: user.role, center_code: user.center_code });
     } catch (error) {
         console.error("Login Error:", error);
@@ -415,8 +410,10 @@ app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// STANDARD API ENDPOINTS
+// KAPSO DYNAMIC MENU ENDPOINTS
 // ==========================================
+
+// 1. Send the initial "Available Centers" Menu
 app.get('/api/public/centers', async (req, res) => {
     try {
         let centersList = [];
@@ -433,16 +430,75 @@ app.get('/api/public/centers', async (req, res) => {
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+app.post('/api/bot/send-centers-menu', async (req, res) => {
+    try {
+        const { phone } = req.body;
+        if (!phone) return res.status(400).json({ error: "Phone number is required" });
+
+        let centersList = [];
+        if (isDbConnected) {
+            try {
+                const result = await db.query('SELECT center_code, center_name, district FROM akshaya_centers ORDER BY center_name ASC LIMIT 10');
+                centersList = result.rows;
+            } catch (dbErr) { }
+        }
+        if (centersList.length === 0) centersList = fallbackCenters.slice(0, 10);
+
+        const kapsoOptions = centersList.map(c => ({
+            id: c.center_code,
+            title: (c.center_name || c.center_code).substring(0, 24),
+            description: `District: ${c.district}`.substring(0, 72)
+        }));
+
+        const payload = {
+            "messaging_product": "whatsapp",
+            "to": phone,
+            "type": "interactive",
+            "interactive": {
+                "type": "list",
+                "body": { "text": "Great! Please select your designated Akshaya Center:" },
+                "action": {
+                    "button": "View Centers",
+                    "sections": [
+                        { "title": "Available Centers", "rows": kapsoOptions }
+                    ]
+                }
+            }
+        };
+
+        const kapsoUrl = `https://api.kapso.ai/meta/whatsapp/v24.0/${process.env.KAPSO_PHONE_ID}/messages`;
+        const kapsoRes = await fetch(kapsoUrl, {
+            method: 'POST',
+            headers: {
+                'X-API-Key': process.env.KAPSO_API_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!kapsoRes.ok) {
+            console.error("🔥 Kapso API Error:", await kapsoRes.text());
+            return res.status(500).json({ error: "Failed to push message via Kapso" });
+        }
+
+        console.log(`✅ Dynamically pushed Centers Menu to ${phone}`);
+        res.json({ success: true, message: "Menu sent!" });
+
+    } catch (error) {
+        console.error("🔥 SEND MENU ERROR: ", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 2. Send the dynamic "Available Services" Menu based on Center ID
 app.post('/api/bot/send-services-menu', async (req, res) => {
     try {
         const { phone, center_id } = req.body;
         if (!phone) return res.status(400).json({ error: "Phone number is required" });
 
-        // Clean center ID (just in case Kapso sends "Selected: TST1")
         const cleanCenterId = (center_id || "").replace(/Selected:\s*/i, "").trim();
         console.log(`🔍 Fetching dynamic services for center: ${cleanCenterId}`);
 
-        // Query Supabase for this specific center's documents
         const { data, error } = await supabase
             .from('document_rules')
             .select('document_type')
@@ -450,23 +506,19 @@ app.post('/api/bot/send-services-menu', async (req, res) => {
 
         if (error) throw error;
 
-        // Extract unique document types (removes duplicates)
         let uniqueServices = [...new Set(data.map(item => item.document_type))];
 
-        // Fallback: If the center hasn't added any rules yet, show defaults
         if (uniqueServices.length === 0) {
             console.log("⚠️ No services found for this center. Sending default options.");
             uniqueServices = ["Income Certificate", "Ration Card"];
         }
 
-        // Convert array into Kapso List format
         const kapsoOptions = uniqueServices.slice(0, 10).map((service) => ({
-            id: service.substring(0, 24), // We use the name as ID so the AI reads it perfectly later
+            id: service.substring(0, 24),
             title: service.substring(0, 24),
             description: `Apply for ${service}`.substring(0, 72)
         }));
 
-        // Build Kapso Payload
         const payload = {
             "messaging_product": "whatsapp",
             "to": phone,

@@ -184,6 +184,15 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         console.log("📋 Rules Found:", matchedRules?.length || 0);
 
+        // THE HARD-STOP: If no rules are found in the database, bypass the AI completely!
+        if (!rulesText || rulesText.trim() === "") {
+            console.log("⚠️ No rules found in DB. Bypassing AI to prevent hallucination.");
+            return res.json({
+                success: true,
+                reply_message: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
+            });
+        }
+
         const chatModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash"
         });

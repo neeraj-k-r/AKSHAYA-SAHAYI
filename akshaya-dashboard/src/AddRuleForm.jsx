@@ -5,11 +5,18 @@ export default function AddRuleForm() {
     const [content, setContent] = useState('');
     const [status, setStatus] = useState('');
 
-    // Replace this with the logged-in center's ID dynamically when ready
-    const centerId = "center_123";
+    // ✅ THE FIX: Dynamically pull the logged-in center's ID from localStorage
+    const centerId = localStorage.getItem('center_code');
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+
+        // Safety check: Prevent submission if they aren't logged in properly
+        if (!centerId) {
+            setStatus('❌ Error: No center ID found. Please log in again.');
+            return;
+        }
+
         setStatus('⏳ Saving rule & generating AI embeddings...');
 
         try {
@@ -37,6 +44,12 @@ export default function AddRuleForm() {
     return (
         <div style={{ maxWidth: '600px', margin: '30px auto', padding: '20px', border: '1px solid #ccc', borderRadius: '8px', fontFamily: 'sans-serif' }}>
             <h2>Add Center Document Guidelines</h2>
+
+            {/* Displaying the active center ID for visual confirmation */}
+            <p style={{ fontSize: '14px', color: '#666' }}>
+                Posting as Center: <strong>{centerId || 'Not Logged In'}</strong>
+            </p>
+
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
 
                 <div>

@@ -235,30 +235,32 @@ Instructions:
 });
 
 // =========================================================================
-// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION
+// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (FIXED IMAGE URL EXTRACTION)
 // =========================================================================
 app.post('/api/webhook/document-upload', async (req, res) => {
     try {
-        const imageUrl = req.body.image_url;
+        const imageUrl = req.body.image_url || req.body.message?.image?.link || req.body.message?.kapso?.media_url || req.body.media_url;
         const documentType = req.body.document_type || "Income Certificate";
         const centerIdRaw = req.body.center_id || req.body.center || "TST1";
         const centerId = centerIdRaw.replace(/Selected:\s*/i, "").trim();
 
         if (!imageUrl) {
+            console.error("❌ No image URL found in request body:", JSON.stringify(req.body, null, 2));
             return res.status(400).json({ error: "No image URL provided" });
         }
 
         console.log(`🔍 Analyzing [${documentType}] for Center [${centerId}] from URL: ${imageUrl}`);
 
-        // Fetch image buffer
         const imageResponse = await fetch(imageUrl);
+        if (!imageResponse.ok) {
+            throw new Error(`Download failed with status ${imageResponse.status}`);
+        }
         const imageBuffer = await imageResponse.arrayBuffer();
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = imageResponse.headers.get('content-type') || 'image/jpeg';
 
-        // 1. Vision AI: Extract text, seals, signatures, dates
         const visionModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        const visionPrompt = `Examine this image carefully. It is supposed to be a ${documentType}. Extract all visible text, check for official seal stamps, signatures, issue dates, and certificate numbers. Summarize the key findings.`;
+        const visionPrompt = `Look at this document. It is supposed to be a ${documentType}. Extract all visible text, check for official stamps, signatures, and dates. Summarize the contents clearly.`;
 
         const imagePart = {
             inlineData: {
@@ -269,9 +271,8 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         const visionResult = await visionModel.generateContent([visionPrompt, imagePart]);
         const extractedDetails = visionResult.response.text();
-        console.log("📝 Vision AI Extracted Details:", extractedDetails);
+        console.log("📝 Vision AI Extracted:", extractedDetails);
 
-        // 2. Fetch configured rules for THIS specific center from Supabase
         const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
         const embedResult = await embeddingModel.embedContent(documentType);
         const queryEmbedding = embedResult.embedding.values;
@@ -283,42 +284,39 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             p_center_id: centerId
         });
 
-        if (rpcError) console.warn("⚠️ RPC Error, falling back to general rules:", rpcError.message);
+        if (rpcError) console.warn("⚠️ RPC Error, falling back:", rpcError.message);
 
         const rulesText = matchedRules && matchedRules.length > 0
             ? matchedRules.map(r => r.content).join('\n')
             : "Standard valid official government document required.";
 
-        // 3. Verification Agent: Compare extracted document details against dashboard guidelines
         const verificationModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const verificationPrompt = `
-You are an official Akshaya Center Document Verification AI Agent.
-
-OFFICIAL DASHBOARD GUIDELINES FOR ${documentType.toUpperCase()}:
-${rulesText}
-
-EXTRACTED DETAILS FROM UPLOADED CITIZEN DOCUMENT:
-${extractedDetails}
-
-Instructions:
-Evaluate if the uploaded document satisfies all official guidelines listed above.
-Format your answer clearly for WhatsApp:
-Start with either "✅ *PASS:*" or "❌ *FAIL:*" followed by a clear, polite explanation for the citizen.
-`;
+      You are an Akshaya Center verification assistant.
+      
+      OFFICIAL RULES FOR THIS DOCUMENT:
+      ${rulesText}
+      
+      DETAILS EXTRACTED FROM UPLOADED IMAGE:
+      ${extractedDetails}
+      
+      Does the uploaded document meet ALL the official rules? 
+      Reply with either "✅ PASS:" or "❌ FAIL:" followed by a short, polite explanation for the citizen.
+    `;
 
         const finalResult = await verificationModel.generateContent(verificationPrompt);
         const finalDecision = finalResult.response.text();
 
-        console.log("🏁 Verification Verdict:", finalDecision);
+        console.log("🏁 Final Decision:", finalDecision);
 
-        return res.json({
+        res.json({
             success: true,
             reply_message: finalDecision
         });
 
     } catch (error) {
         console.error("❌ Document Verification Error:", error);
-        return res.status(500).json({
+        res.status(500).json({
             success: false,
             reply_message: "Sorry, I ran into an issue verifying your document. Please try again."
         });
@@ -454,12 +452,10 @@ app.put('/api/edit-rule/:id', async (req, res) => {
 
         console.log(`🔄 Updating rule ID: ${id} and regenerating embeddings...`);
 
-        // Generate a fresh AI embedding for the new text
         const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
         const embedResult = await embeddingModel.embedContent(content);
         const vector = embedResult.embedding.values;
 
-        // Update both the text and the embedding in Supabase
         const { error } = await supabase
             .from('document_rules')
             .update({ content: content, embedding: vector })
@@ -478,7 +474,6 @@ app.put('/api/edit-rule/:id', async (req, res) => {
 // KAPSO DYNAMIC MENU ENDPOINTS
 // ==========================================
 
-// 1. Send the initial "Available Centers" Menu
 app.get('/api/public/centers', async (req, res) => {
     try {
         let centersList = [];
@@ -555,7 +550,6 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
     }
 });
 
-// 2. Send the dynamic "Available Services" Menu based on Center ID
 app.post('/api/bot/send-services-menu', async (req, res) => {
     try {
         const { phone, center_id } = req.body;

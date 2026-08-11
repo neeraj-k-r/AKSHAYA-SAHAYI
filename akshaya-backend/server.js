@@ -410,6 +410,58 @@ app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
+// RULES MANAGEMENT ENDPOINTS
+// ==========================================
+
+// 1. Fetch all rules for a specific center
+app.get('/api/center-rules/:centerId', async (req, res) => {
+    try {
+        const { centerId } = req.params;
+        const { data, error } = await supabase
+            .from('document_rules')
+            .select('id, document_type, content')
+            .eq('center_id', centerId)
+            .order('id', { ascending: false });
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error("Fetch Rules Error:", error);
+        res.status(500).json({ error: "Failed to fetch rules" });
+    }
+});
+
+// 2. Edit an existing rule (Updates text AND regenerates AI embedding)
+app.put('/api/edit-rule/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content } = req.body;
+
+        if (!content) return res.status(400).json({ error: "Content is required" });
+
+        console.log(`🔄 Updating rule ID: ${id} and regenerating embeddings...`);
+
+        // Generate a fresh AI embedding for the new text
+        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+        const embedResult = await embeddingModel.embedContent(content);
+        const vector = embedResult.embedding.values;
+
+        // Update both the text and the embedding in Supabase
+        const { error } = await supabase
+            .from('document_rules')
+            .update({ content: content, embedding: vector })
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({ success: true, message: "Rule successfully updated!" });
+    } catch (error) {
+        console.error("Edit Rule Error:", error);
+        res.status(500).json({ error: "Failed to update rule" });
+    }
+});
+
+// ==========================================
 // KAPSO DYNAMIC MENU ENDPOINTS
 // ==========================================
 

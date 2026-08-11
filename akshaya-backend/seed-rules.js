@@ -2,13 +2,27 @@ require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+// Validate environment variables
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseKey) {
+    console.error("❌ Error: Missing SUPABASE_URL or Supabase API Key in your .env file.");
+    process.exit(1);
+}
+
+if (!process.env.GEMINI_API_KEY) {
+    console.error("❌ Error: Missing GEMINI_API_KEY in your .env file.");
+    process.exit(1);
+}
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Google's 768-dimension embedding model
+// Google's embedding model
 const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
 
-// Sample Akshaya Guidelines & Rules
+// Global Akshaya Guidelines & Rules
 const rulesToSeed = [
     {
         document_type: "Income Certificate",
@@ -20,20 +34,26 @@ const rulesToSeed = [
     },
     {
         document_type: "Aadhaar Card",
-        content: "Aadhaar Card requirements: Clear, unblurred photo showing 12-digit Aadhaar number, name, DOB, address, and QR code. Masked Aadhaar is allowed as long as the last 4 digits are visible."
+        content: "Aadhaar Card requirements: Clear, unblurred photo showing 12-digit identification number, name, DOB, address, and QR code. Masked version is allowed as long as the last 4 digits are visible."
+    },
+    {
+        document_type: "Caste Certificate",
+        content: "Caste Certificate requirements: Document must show applicant's name, certified caste category, issuing authority signature, and official government seal."
     }
 ];
 
 async function seedRules() {
-    console.log("🌱 Seeding Akshaya Rules into Supabase Vector DB...");
+    console.log("🌱 Seeding Global Akshaya Rules into Supabase Vector DB...");
 
     for (const rule of rulesToSeed) {
         try {
-            // 1. Generate 768-dim vector embedding
+            console.log(`⏳ Generating vector embedding for [${rule.document_type}]...`);
+
+            // 1. Generate 768-dim vector embedding via Gemini
             const result = await embeddingModel.embedContent(rule.content);
             const embedding = result.embedding.values;
 
-            // 2. Save into document_rules table
+            // 2. Save into document_rules table globally (without center_id)
             const { error } = await supabase.from('document_rules').insert({
                 document_type: rule.document_type,
                 content: rule.content,
@@ -43,10 +63,10 @@ async function seedRules() {
             if (error) {
                 console.error(`❌ Error inserting ${rule.document_type}:`, error.message);
             } else {
-                console.log(`✅ Successfully embedded rule for: ${rule.document_type}`);
+                console.log(`✅ Successfully embedded and saved rule for: ${rule.document_type}`);
             }
         } catch (err) {
-            console.error(`❌ Embedding failed for ${rule.document_type}:`, err);
+            console.error(`❌ Embedding failed for ${rule.document_type}:`, err.message || err);
         }
     }
 

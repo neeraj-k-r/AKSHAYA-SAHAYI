@@ -235,19 +235,27 @@ Instructions:
 });
 
 // =========================================================================
-// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (FIXED IMAGE URL EXTRACTION)
-// =========================================================================
-// =========================================================================
-// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (BULLETPROOF VERSION)
+// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (BULLETPROOF FIX APPLIED)
 // =========================================================================
 app.post('/api/webhook/document-upload', async (req, res) => {
     try {
         console.log("========== DOCUMENT UPLOAD WEBHOOK ==========");
         console.log("BODY RECEIVED:", JSON.stringify(req.body, null, 2));
 
-        // Safely check all possible locations for the image URL
-        const imageUrl = req.body.image_url || req.body.message?.image?.link || req.body.message?.kapso?.media_url || req.body.media_url || req.body.url;
-        const documentType = req.body.document_type || req.body.service || "Income Certificate";
+        // 1. Find the image URL string (wherever Kapso hides it)
+        let rawImageUrl = req.body.image_url || req.body.message?.image?.link || req.body.message?.kapso?.media_url || req.body.media_url || req.body.url;
+
+        // 2. SMART EXTRACTION: Pluck out only the actual 'https://' link
+        let imageUrl = null;
+        if (rawImageUrl && typeof rawImageUrl === 'string') {
+            const urlMatch = rawImageUrl.match(/(https?:\/\/[^\s]+)/);
+            if (urlMatch) {
+                imageUrl = urlMatch[0];
+            }
+        }
+
+        // 3. Rename variable so the AI knows it is a SERVICE, not the required document
+        const serviceRequested = req.body.document_type || req.body.service || req.body.selected_service || "Income Certificate";
         const centerIdRaw = req.body.center_id || req.body.center || req.body.message?.center_id || "TST1";
         const centerId = String(centerIdRaw).replace(/Selected:\s*/i, "").trim();
 
@@ -261,12 +269,22 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         console.log(`🔍 Downloading image from: ${imageUrl}`);
 
-        // 1. Download image buffer securely
+        // 4. Download image buffer securely using Kapso API Key header
         let imageBuffer;
         try {
-            const imgRes = await fetch(imageUrl);
-            if (!imgRes.ok) throw new Error(`HTTP error! status: ${imgRes.status}`);
-            imageBuffer = await imgRes.arrayBuffer();
+            const imgRes = await fetch(imageUrl, {
+                headers: {
+                    'X-API-Key': process.env.KAPSO_API_KEY || ''
+                }
+            });
+            if (!imgRes.ok) {
+                console.log(`⚠️ Fetch with X-API-Key failed (Status: ${imgRes.status}). Trying plain fetch...`);
+                const fallbackRes = await fetch(imageUrl);
+                if (!fallbackRes.ok) throw new Error(`HTTP error! status: ${fallbackRes.status}`);
+                imageBuffer = await fallbackRes.arrayBuffer();
+            } else {
+                imageBuffer = await imgRes.arrayBuffer();
+            }
         } catch (fetchErr) {
             console.error("❌ Failed to download image:", fetchErr.message);
             return res.json({
@@ -278,9 +296,9 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = 'image/jpeg';
 
-        // 2. Vision AI: Extract text, seals, signatures, and dates
+        // 5. Vision AI: Identify what the citizen actually uploaded
         const visionModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-        const visionPrompt = `Examine this image carefully. It is supposed to be a ${documentType}. Extract all visible text, check for official seal stamps, signatures, issue dates, and certificate numbers. Summarize the key findings.`;
+        const visionPrompt = `Examine this uploaded document image. Identify exactly what type of document it is (e.g., Aadhaar Card, Ration Card, Income Certificate, PAN Card, etc.). Extract all visible text, check for official seal stamps, signatures, issue dates, and ID numbers. Summarize the key findings.`;
 
         const visionResult = await visionModel.generateContent([
             visionPrompt,
@@ -289,11 +307,11 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const extractedDetails = visionResult.response.text();
         console.log("📝 Vision AI Extracted Details:", extractedDetails);
 
-        // 3. Fetch rules safely with fallbacks (prevents crashes if RPC fails)
+        // 6. Fetch rules safely using the new serviceRequested variable
         let rulesText = "";
         try {
             const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
-            const embedResult = await embeddingModel.embedContent(documentType);
+            const embedResult = await embeddingModel.embedContent(serviceRequested);
             const queryEmbedding = embedResult.embedding.values;
 
             const { data: matchedRules, error: rpcError } = await supabase.rpc('match_center_rules', {
@@ -306,11 +324,10 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             if (!rpcError && matchedRules && matchedRules.length > 0) {
                 rulesText = matchedRules.map(r => r.content).join('\n');
             } else {
-                // Fallback to standard table query if RPC isn't set up for this center yet
                 const { data: fallbackRules } = await supabase
                     .from('document_rules')
                     .select('content')
-                    .eq('document_type', documentType)
+                    .eq('document_type', serviceRequested)
                     .limit(2);
                 if (fallbackRules && fallbackRules.length > 0) {
                     rulesText = fallbackRules.map(r => r.content).join('\n');
@@ -326,21 +343,25 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         console.log("⚖️ Active Rules Used for Verification:", rulesText);
 
-        // 4. Verification Agent: Compare extracted details against rules
+        // 7. Verification Agent: Strict prompt to prevent hallucination
         const verificationModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const verificationPrompt = `
 You are an official Akshaya Center Document Verification AI Agent.
 
-OFFICIAL GUIDELINES FOR ${documentType.toUpperCase()}:
+SERVICE REQUESTED BY CITIZEN: ${serviceRequested.toUpperCase()}
+
+REQUIRED SUPPORTING DOCUMENTS FOR THIS SERVICE:
 ${rulesText}
 
-EXTRACTED DETAILS FROM UPLOADED CITIZEN DOCUMENT:
+EXTRACTED DETAILS FROM THE UPLOADED DOCUMENT:
 ${extractedDetails}
 
 Instructions:
-Evaluate if the uploaded document satisfies all official guidelines listed above.
-Format your answer clearly for WhatsApp:
-Start with either "✅ *PASS:*" or "❌ *FAIL:*" followed by a clear, polite explanation for the citizen.
+1. Identify what document the citizen actually uploaded based on the extracted details.
+2. Check if this uploaded document matches ANY of the documents listed in the "REQUIRED SUPPORTING DOCUMENTS".
+3. If YES, reply with "✅ *PASS:*" and a polite confirmation.
+4. If NO, reply with "❌ *FAIL:*" and gently explain what they uploaded versus what is actually required.
+5. CRITICAL RULE: The citizen is applying to GET a ${serviceRequested.toUpperCase()}. You must NEVER ask them to upload a ${serviceRequested.toUpperCase()}. You are ONLY checking their supporting documents.
 `;
 
         const finalResult = await verificationModel.generateContent(verificationPrompt);
@@ -355,7 +376,6 @@ Start with either "✅ *PASS:*" or "❌ *FAIL:*" followed by a clear, polite exp
 
     } catch (error) {
         console.error("🔥 CRITICAL DOCUMENT VERIFICATION CRASH:", error);
-        // Returns a polite message to WhatsApp instead of crashing with a 500 error
         return res.json({
             success: true,
             reply_message: "❌ *FAIL:* An internal error occurred while processing your document. Please ensure the image is clear and try uploading again."

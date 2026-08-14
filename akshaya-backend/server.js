@@ -235,32 +235,43 @@ Instructions:
 });
 
 // =========================================================================
-// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (ANTI-BOT HEADERS ADDED)
+// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (ANTI-BOT HEADERS + ULTIMATE FALLBACK)
 // =========================================================================
 app.post('/api/webhook/document-upload', async (req, res) => {
     try {
         console.log("========== DOCUMENT UPLOAD WEBHOOK ==========");
         console.log("BODY RECEIVED:", JSON.stringify(req.body, null, 2));
 
-        // 1. Find the image URL string (wherever Kapso hides it)
-        let rawImageUrl = req.body.image_url || req.body.message?.image?.link || req.body.message?.kapso?.media_url || req.body.media_url || req.body.url;
+        // 1. Broadly check for the image URL key
+        let rawImageUrl = req.body.image_url || req.body.imageUrl || req.body.message?.image?.link || req.body.message?.kapso?.media_url || req.body.media_url || req.body.url;
+
+        let imageUrl = null;
 
         // 2. SMART EXTRACTION: Pluck out only the actual 'https://' link
-        let imageUrl = null;
         if (rawImageUrl && typeof rawImageUrl === 'string') {
-            const urlMatch = rawImageUrl.match(/(https?:\/\/[^\s]+)/);
+            const urlMatch = rawImageUrl.match(/(https?:\/\/[^\s"']+)/);
             if (urlMatch) {
                 imageUrl = urlMatch[0];
             }
         }
 
-        // 3. Rename variable so the AI knows it is a SERVICE, not the required document
-        const serviceRequested = req.body.document_type || req.body.service || req.body.selected_service || "Income Certificate";
+        // 3. ULTIMATE FALLBACK: If Kapso mapped the variable wrong, scan the entire JSON payload for ANY link
+        if (!imageUrl) {
+            const bodyString = JSON.stringify(req.body);
+            const fallbackMatch = bodyString.match(/(https?:\/\/[^\s"'>]+)/);
+            if (fallbackMatch) {
+                imageUrl = fallbackMatch[0];
+                console.log("⚠️ Rescued URL via full body scan:", imageUrl);
+            }
+        }
+
+        // 4. Rename variable so the AI knows it is a SERVICE, not the required document
+        const serviceRequested = req.body.document_type || req.body.documentType || req.body.service || req.body.selected_service || "Income Certificate";
         const centerIdRaw = req.body.center_id || req.body.center || req.body.message?.center_id || "TST1";
         const centerId = String(centerIdRaw).replace(/Selected:\s*/i, "").trim();
 
         if (!imageUrl) {
-            console.log("⚠️ No image URL found in webhook payload.");
+            console.log("⚠️ CRITICAL: No image URL found anywhere in webhook payload.");
             return res.json({
                 success: true,
                 reply_message: "❌ *FAIL:* No image was detected. Please tap the paperclip or camera icon to snap a clear picture and try uploading again."
@@ -269,7 +280,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         console.log(`🔍 Downloading image from: ${imageUrl} (with 20s timeout & Anti-Bot headers)`);
 
-        // 4. Download image buffer securely using Kapso API Key, Browser Headers, and Timeout
+        // 5. Download image buffer securely using Kapso API Key, Browser Headers, and Timeout
         let imageBuffer;
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => {
@@ -325,7 +336,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const base64Image = Buffer.from(imageBuffer).toString('base64');
         const mimeType = 'image/jpeg';
 
-        // 5. Vision AI: Identify what the citizen actually uploaded
+        // 6. Vision AI: Identify what the citizen actually uploaded
         const visionModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const visionPrompt = `Examine this uploaded document image. Identify exactly what type of document it is (e.g., Aadhaar Card, Ration Card, Income Certificate, PAN Card, etc.). Extract all visible text, check for official seal stamps, signatures, issue dates, and ID numbers. Summarize the key findings.`;
 
@@ -336,7 +347,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const extractedDetails = visionResult.response.text();
         console.log("📝 Vision AI Extracted Details:", extractedDetails);
 
-        // 6. Fetch rules safely using the new serviceRequested variable
+        // 7. Fetch rules safely using the new serviceRequested variable
         let rulesText = "";
         try {
             const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
@@ -372,7 +383,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         console.log("⚖️ Active Rules Used for Verification:", rulesText);
 
-        // 7. Verification Agent: Strict prompt to prevent hallucination
+        // 8. Verification Agent: Strict prompt to prevent hallucination
         const verificationModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
         const verificationPrompt = `
 You are an official Akshaya Center Document Verification AI Agent.

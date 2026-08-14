@@ -267,29 +267,48 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             });
         }
 
-        console.log(`🔍 Downloading image from: ${imageUrl}`);
+        console.log(`🔍 Downloading image from: ${imageUrl} (with 20s timeout)`);
 
-        // 4. Download image buffer securely using Kapso API Key header
+        // 4. Download image buffer securely using Kapso API Key header AND a strict timeout
         let imageBuffer;
+        const fetchController = new AbortController();
+        const fetchTimeout = setTimeout(() => {
+            fetchController.abort();
+        }, 20000); // 20-second strict timeout
+
         try {
-            const imgRes = await fetch(imageUrl, {
+            let imgRes = await fetch(imageUrl, {
                 headers: {
                     'X-API-Key': process.env.KAPSO_API_KEY || ''
-                }
+                },
+                signal: fetchController.signal
             });
+
             if (!imgRes.ok) {
                 console.log(`⚠️ Fetch with X-API-Key failed (Status: ${imgRes.status}). Trying plain fetch...`);
-                const fallbackRes = await fetch(imageUrl);
-                if (!fallbackRes.ok) throw new Error(`HTTP error! status: ${fallbackRes.status}`);
-                imageBuffer = await fallbackRes.arrayBuffer();
-            } else {
-                imageBuffer = await imgRes.arrayBuffer();
+                imgRes = await fetch(imageUrl, { signal: fetchController.signal });
+
+                if (!imgRes.ok) {
+                    throw new Error(`HTTP error! status: ${imgRes.status}`);
+                }
             }
+
+            imageBuffer = await imgRes.arrayBuffer();
+            clearTimeout(fetchTimeout); // Clear the timeout if download succeeds
+            console.log("✅ Image successfully downloaded into buffer!");
+
         } catch (fetchErr) {
-            console.error("❌ Failed to download image:", fetchErr.message);
+            clearTimeout(fetchTimeout); // Ensure timeout is cleared on error
+
+            const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message.includes('timeout');
+            console.error(`❌ Image Download ${isTimeout ? 'TIMEOUT' : 'ERROR'}:`, fetchErr.message);
+
+            // ALWAYS return a JSON response so the Kapso workflow doesn't crash
             return res.json({
-                success: true,
-                reply_message: "❌ *FAIL:* Could not download the image file from WhatsApp. Please re-upload your document."
+                success: true, // We return 'success: true' so the workflow considers the webhook completed
+                reply_message: isTimeout
+                    ? "❌ *FAIL:* The document download timed out. Please check your internet connection and try uploading the image again."
+                    : "❌ *FAIL:* Could not securely download the image file. Please re-upload your document."
             });
         }
 

@@ -235,7 +235,7 @@ Instructions:
 });
 
 // =========================================================================
-// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (BULLETPROOF FIX APPLIED)
+// KAPSO WEBHOOK: RAG DOCUMENT VERIFICATION (ANTI-BOT HEADERS ADDED)
 // =========================================================================
 app.post('/api/webhook/document-upload', async (req, res) => {
     try {
@@ -267,26 +267,37 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             });
         }
 
-        console.log(`🔍 Downloading image from: ${imageUrl} (with 20s timeout)`);
+        console.log(`🔍 Downloading image from: ${imageUrl} (with 20s timeout & Anti-Bot headers)`);
 
-        // 4. Download image buffer securely using Kapso API Key header AND a strict timeout
+        // 4. Download image buffer securely using Kapso API Key, Browser Headers, and Timeout
         let imageBuffer;
         const fetchController = new AbortController();
         const fetchTimeout = setTimeout(() => {
             fetchController.abort();
         }, 20000); // 20-second strict timeout
 
+        const fetchHeaders = {
+            'X-API-Key': process.env.KAPSO_API_KEY || '',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/jpeg, image/png, image/webp, */*'
+        };
+
         try {
             let imgRes = await fetch(imageUrl, {
-                headers: {
-                    'X-API-Key': process.env.KAPSO_API_KEY || ''
-                },
+                headers: fetchHeaders,
                 signal: fetchController.signal
             });
 
             if (!imgRes.ok) {
                 console.log(`⚠️ Fetch with X-API-Key failed (Status: ${imgRes.status}). Trying plain fetch...`);
-                imgRes = await fetch(imageUrl, { signal: fetchController.signal });
+                // Retrying without X-API-Key but keeping browser headers
+                const plainHeaders = { ...fetchHeaders };
+                delete plainHeaders['X-API-Key'];
+
+                imgRes = await fetch(imageUrl, {
+                    headers: plainHeaders,
+                    signal: fetchController.signal
+                });
 
                 if (!imgRes.ok) {
                     throw new Error(`HTTP error! status: ${imgRes.status}`);
@@ -294,21 +305,20 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             }
 
             imageBuffer = await imgRes.arrayBuffer();
-            clearTimeout(fetchTimeout); // Clear the timeout if download succeeds
+            clearTimeout(fetchTimeout);
             console.log("✅ Image successfully downloaded into buffer!");
 
         } catch (fetchErr) {
-            clearTimeout(fetchTimeout); // Ensure timeout is cleared on error
+            clearTimeout(fetchTimeout);
 
             const isTimeout = fetchErr.name === 'AbortError' || fetchErr.message.includes('timeout');
             console.error(`❌ Image Download ${isTimeout ? 'TIMEOUT' : 'ERROR'}:`, fetchErr.message);
 
-            // ALWAYS return a JSON response so the Kapso workflow doesn't crash
             return res.json({
-                success: true, // We return 'success: true' so the workflow considers the webhook completed
+                success: true,
                 reply_message: isTimeout
                     ? "❌ *FAIL:* The document download timed out. Please check your internet connection and try uploading the image again."
-                    : "❌ *FAIL:* Could not securely download the image file. Please re-upload your document."
+                    : "❌ *FAIL:* Could not securely download the image file from WhatsApp's servers. Please re-upload your document."
             });
         }
 
@@ -416,12 +426,20 @@ app.post('/api/webhook/document-upload-legacy', async (req, res) => {
             try {
                 console.log("📥 Downloading image from WhatsApp/Kapso...");
                 let buffer;
-                const imgRes = await fetch(imageUrl);
+                const imgRes = await fetch(imageUrl, {
+                    headers: {
+                        'X-API-Key': process.env.KAPSO_API_KEY || '',
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'image/jpeg, image/png, image/webp, */*'
+                    }
+                });
+
                 if (imgRes.ok) {
                     buffer = Buffer.from(await imgRes.arrayBuffer());
                 } else {
                     throw new Error(`Download failed with status ${imgRes.status}`);
                 }
+
                 const tempFilePath = path.join(__dirname, `temp_${Date.now()}.jpg`);
                 fs.writeFileSync(tempFilePath, buffer);
 

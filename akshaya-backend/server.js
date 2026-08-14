@@ -136,7 +136,7 @@ app.post('/api/add-rule', async (req, res) => {
 });
 
 // =========================================================================
-// KAPSO WEBHOOK: CHAT & RAG KNOWLEDGE BASE QUERY
+// KAPSO WEBHOOK: CHAT & RAG KNOWLEDGE BASE QUERY (WITH STRICT TIMEOUT)
 // =========================================================================
 app.post('/api/webhook/chat', async (req, res) => {
     console.log("========== CHAT WEBHOOK ==========");
@@ -159,63 +159,57 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         console.log(`💬 User Query: "${userMessage}" | Center: "${centerId}"`);
 
-        const embeddingModel = genAI.getGenerativeModel({
-            model: "gemini-embedding-2"
-        });
+        // 1. Create a 15-second Kill-Switch
+        const timeoutMs = 15000; // 15 seconds
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("TIMEOUT")), timeoutMs)
+        );
 
-        const embedResult = await embeddingModel.embedContent(userMessage);
-        const queryEmbedding = embedResult.embedding.values;
+        // 2. Wrap all external API calls (Gemini & Supabase) in a single async task
+        const processChatTask = async () => {
+            const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+            const embedResult = await embeddingModel.embedContent(userMessage);
+            const queryEmbedding = embedResult.embedding.values;
 
-        const { data: matchedRules, error: rpcError } =
-            await supabase.rpc('match_center_rules', {
+            const { data: matchedRules, error: rpcError } = await supabase.rpc('match_center_rules', {
                 query_embedding: queryEmbedding,
                 match_threshold: 0.4,
                 match_count: 3,
                 p_center_id: centerId
             });
 
-        if (rpcError) throw rpcError;
+            if (rpcError) throw rpcError;
 
-        const rulesText =
-            matchedRules && matchedRules.length > 0
+            const rulesText = matchedRules && matchedRules.length > 0
                 ? matchedRules.map(r => r.content).join('\n')
                 : "";
 
-        console.log("📋 Rules Found:", matchedRules?.length || 0);
+            console.log("📋 Rules Found:", matchedRules?.length || 0);
 
-        if (!rulesText || rulesText.trim() === "") {
-            console.log("⚠️ No rules found in DB. Bypassing AI to prevent hallucination.");
-            return res.json({
-                success: true,
-                reply_message: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
-            });
-        }
+            if (!rulesText || rulesText.trim() === "") {
+                console.log("⚠️ No rules found in DB. Bypassing AI to prevent hallucination.");
+                return "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly.";
+            }
 
-        const chatModel = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash"
-        });
-
-        const prompt = `
+            const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+            const prompt = `
 You are an Akshaya Center assistant.
-
-Citizen Request:
-${userMessage}
-
-Center Rules:
-${rulesText}
-
+Citizen Request: ${userMessage}
+Center Rules: ${rulesText}
 Instructions:
 1. List only the required documents.
 2. Use bullet points.
-3. If no rules are found, say:
-"I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
+3. If no rules are found, say: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
 4. Do not invent documents.
 `;
+            const aiResult = await chatModel.generateContent(prompt);
+            return aiResult.response.text();
+        };
 
-        const aiResult = await chatModel.generateContent(prompt);
-        const finalReply = aiResult.response.text();
+        // 3. RACE: The AI processing vs The 15-Second Timer
+        const finalReply = await Promise.race([processChatTask(), timeoutPromise]);
 
-        console.log("✅ AI Reply Generated");
+        console.log("✅ AI Reply Generated before timeout!");
 
         return res.json({
             success: true,
@@ -223,13 +217,15 @@ Instructions:
         });
 
     } catch (error) {
-        console.error("❌ Chat Webhook Error:");
-        console.error(error);
+        const isTimeout = error.message === "TIMEOUT";
+        console.error(`❌ Chat Webhook ${isTimeout ? 'TIMEOUT' : 'ERROR'}:`, isTimeout ? "Took longer than 15s" : error.message);
 
+        // ALWAYS return JSON so Kapso doesn't crash
         return res.json({
-            success: false,
-            reply_message:
-                "Sorry, I am having trouble fetching the center information right now."
+            success: true,
+            reply_message: isTimeout
+                ? "⏳ *System Busy:* I'm currently experiencing high traffic. Please wait a moment and try selecting the service again."
+                : "Sorry, I am having trouble fetching the center information right now."
         });
     }
 });

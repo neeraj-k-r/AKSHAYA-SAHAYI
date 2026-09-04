@@ -155,11 +155,11 @@ app.post('/api/webhook/chat', async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
 
     try {
-        const userMessageRaw = req.body.message 
-            || req.body.text 
-            || req.body.query 
-            || req.body.Body 
-            || req.body.service 
+        const userMessageRaw = req.body.message
+            || req.body.text
+            || req.body.query
+            || req.body.Body
+            || req.body.service
             || req.body.selected_service
             || req.body.list_reply?.title
             || req.body.interactive?.list_reply?.title
@@ -167,11 +167,11 @@ app.post('/api/webhook/chat', async (req, res) => {
             || "";
         const userMessage = String(userMessageRaw).replace(/Selected:\s*/i, "").trim();
 
-        const centerIdRaw = req.body.center_id 
-            || req.body.center 
-            || req.body.centerId 
-            || req.body.center_code 
-            || req.body.assigned_center_code 
+        const centerIdRaw = req.body.center_id
+            || req.body.center
+            || req.body.centerId
+            || req.body.center_code
+            || req.body.assigned_center_code
             || "center_123";
         const centerId = String(centerIdRaw).replace(/Selected:\s*/i, "").trim();
 

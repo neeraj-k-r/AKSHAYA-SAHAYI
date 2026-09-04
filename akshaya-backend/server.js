@@ -135,6 +135,17 @@ app.post('/api/add-rule', async (req, res) => {
     }
 });
 
+// Helper for wrapping external calls with a quick timeout
+function withTimeout(promise, ms = 2500) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('TIMEOUT_EXCEEDED')), ms);
+        promise.then(
+            res => { clearTimeout(timer); resolve(res); },
+            err => { clearTimeout(timer); reject(err); }
+        );
+    });
+}
+
 // =========================================================================
 // KAPSO WEBHOOK: CHAT & RAG KNOWLEDGE BASE QUERY (WITH STRICT TIMEOUT)
 // =========================================================================
@@ -144,11 +155,25 @@ app.post('/api/webhook/chat', async (req, res) => {
     console.log(JSON.stringify(req.body, null, 2));
 
     try {
-        const userMessageRaw = req.body.message || req.body.text || req.body.query || "";
-        const userMessage = userMessageRaw.replace(/Selected:\s*/i, "").trim();
+        const userMessageRaw = req.body.message 
+            || req.body.text 
+            || req.body.query 
+            || req.body.Body 
+            || req.body.service 
+            || req.body.selected_service
+            || req.body.list_reply?.title
+            || req.body.interactive?.list_reply?.title
+            || req.body.interactive?.button_reply?.title
+            || "";
+        const userMessage = String(userMessageRaw).replace(/Selected:\s*/i, "").trim();
 
-        const centerIdRaw = req.body.center_id || req.body.center || "center_123";
-        const centerId = centerIdRaw.replace(/Selected:\s*/i, "").trim();
+        const centerIdRaw = req.body.center_id 
+            || req.body.center 
+            || req.body.centerId 
+            || req.body.center_code 
+            || req.body.assigned_center_code 
+            || "center_123";
+        const centerId = String(centerIdRaw).replace(/Selected:\s*/i, "").trim();
 
         if (!userMessage) {
             return res.json({
@@ -167,40 +192,70 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         // 2. Wrap all external API calls (Gemini & Supabase) in a single async task
         const processChatTask = async () => {
-            const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
-            const embedResult = await embeddingModel.embedContent(userMessage);
-            const queryEmbedding = embedResult.embedding.values;
+            let matchedRules = [];
+            let rulesText = "";
 
-            const { data: matchedRules, error: rpcError } = await supabase.rpc('match_center_rules', {
-                query_embedding: queryEmbedding,
-                match_threshold: 0.4,
-                match_count: 3,
-                p_center_id: centerId
-            });
+            try {
+                const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-2" });
+                const embedResult = await withTimeout(embeddingModel.embedContent(userMessage), 3000);
+                const queryEmbedding = embedResult.embedding.values;
 
-            if (rpcError) throw rpcError;
+                const { data, error: rpcError } = await withTimeout(
+                    supabase.rpc('match_center_rules', {
+                        query_embedding: queryEmbedding,
+                        match_threshold: 0.4,
+                        match_count: 3,
+                        p_center_id: centerId
+                    }),
+                    3000
+                );
 
-            const rulesText = matchedRules && matchedRules.length > 0
-                ? matchedRules.map(r => r.content).join('\n')
-                : "";
+                if (rpcError) {
+                    console.warn("⚠️ Supabase match_center_rules RPC error:", rpcError.message || rpcError);
+                } else if (data && data.length > 0) {
+                    matchedRules = data;
+                }
+            } catch (embedOrRpcErr) {
+                console.warn("⚠️ Embedding / Supabase RPC timed out or failed (using AI fallback):", embedOrRpcErr.message);
+            }
+
+            // Direct DB Fallback if RPC yielded no results (with 2s timeout)
+            if (matchedRules.length === 0) {
+                try {
+                    const { data: dbRules } = await withTimeout(
+                        supabase
+                            .from('document_rules')
+                            .select('content')
+                            .ilike('document_type', `%${userMessage}%`)
+                            .limit(3),
+                        2000
+                    );
+                    if (dbRules && dbRules.length > 0) {
+                        matchedRules = dbRules;
+                    }
+                } catch (fallbackDbErr) {
+                    console.warn("⚠️ Supabase direct lookup skipped/timed out:", fallbackDbErr.message);
+                }
+            }
+
+            if (matchedRules && matchedRules.length > 0) {
+                rulesText = matchedRules.map(r => r.content).join('\n');
+            }
 
             console.log("📋 Rules Found:", matchedRules?.length || 0);
 
-            if (!rulesText || rulesText.trim() === "") {
-                console.log("⚠️ No rules found in DB. Bypassing AI to prevent hallucination.");
-                return "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly.";
-            }
-
+            // Ask Gemini AI for requirements (works even if Supabase is offline/empty)
             const chatModel = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
             const prompt = `
-You are an Akshaya Center assistant.
-Citizen Request: ${userMessage}
-Center Rules: ${rulesText}
+You are an official Akshaya Center assistant in Kerala.
+Citizen Request / Service: ${userMessage}
+Akshaya Center Code: ${centerId}
+${rulesText ? `Specific Center Guidelines:\n${rulesText}` : `Provide standard official Kerala Akshaya Center requirements for applying for "${userMessage}".`}
+
 Instructions:
-1. List only the required documents.
-2. Use bullet points.
-3. If no rules are found, say: "I currently do not have the specific document list for this service at your chosen center. Please contact the center directly."
-4. Do not invent documents.
+1. List only the essential required documents clearly using bullet points.
+2. Provide a brief, polite explanation of next steps.
+3. Keep the format clean and friendly for WhatsApp messages.
 `;
             const aiResult = await chatModel.generateContent(prompt);
             return aiResult.response.text();
@@ -225,7 +280,7 @@ Instructions:
             success: true,
             reply_message: isTimeout
                 ? "⏳ *System Busy:* I'm currently experiencing high traffic. Please wait a moment and try selecting the service again."
-                : "Sorry, I am having trouble fetching the center information right now."
+                : "I am ready to help! Please reply with the document or service you need assistance with."
         });
     }
 });
@@ -656,24 +711,32 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
 
 app.post('/api/bot/send-services-menu', async (req, res) => {
     try {
-        const { phone, center_id } = req.body;
+        const phoneRaw = req.body.phone || req.body.From || req.body.to || req.body.mobile || req.body.wa_id || "";
+        const phone = String(phoneRaw).replace(/whatsapp:\+?/i, "").replace(/\+/g, "").trim();
+        const center_id = req.body.center_id || req.body.center || req.body.centerId || "";
+
         if (!phone) return res.status(400).json({ error: "Phone number is required" });
 
         const cleanCenterId = (center_id || "").replace(/Selected:\s*/i, "").trim();
         console.log(`🔍 Fetching dynamic services for center: ${cleanCenterId}`);
 
-        const { data, error } = await supabase
-            .from('document_rules')
-            .select('document_type')
-            .eq('center_id', cleanCenterId);
+        let uniqueServices = [];
+        try {
+            const { data, error } = await supabase
+                .from('document_rules')
+                .select('document_type')
+                .eq('center_id', cleanCenterId);
 
-        if (error) throw error;
-
-        let uniqueServices = [...new Set(data.map(item => item.document_type))];
+            if (!error && data && data.length > 0) {
+                uniqueServices = [...new Set(data.map(item => item.document_type))];
+            }
+        } catch (dbErr) {
+            console.warn("⚠️ Could not fetch services from Supabase:", dbErr.message);
+        }
 
         if (uniqueServices.length === 0) {
-            console.log("⚠️ No services found for this center. Sending default options.");
-            uniqueServices = ["Income Certificate", "Ration Card"];
+            console.log("⚠️ No services found for this center (or DB offline). Sending default options.");
+            uniqueServices = ["Income Certificate", "Ration Card", "Aadhaar Card", "Caste Certificate", "Birth Certificate"];
         }
 
         const kapsoOptions = uniqueServices.slice(0, 10).map((service) => ({

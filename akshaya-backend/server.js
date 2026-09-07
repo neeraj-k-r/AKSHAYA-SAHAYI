@@ -40,7 +40,7 @@ cloudinary.config({
 });
 
 // ==========================================
-// 4. POSTGRES (used only for dashboard/auth)
+// 4. POSTGRES (dashboard / auth only)
 // ==========================================
 const db = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -61,7 +61,7 @@ db.query('SELECT 1')
     })
     .catch((error) => {
         isDbConnected = false;
-        console.log("ℹ️ PostgreSQL unavailable. Dashboard/auth features limited.");
+        console.log("ℹ️ PostgreSQL unavailable. Dashboard/auth limited.");
         console.log("Reason:", error.message);
     });
 
@@ -90,8 +90,7 @@ const fallbackCenters = localData.centers || [];
 // ==========================================
 // 6. SESSION MEMORY (per phone number)
 //
-// Stores selected center + service list.
-// NOTE: cleared when Render restarts.
+// Cleared on Render restart.
 // Move to Redis/DB for production.
 // ==========================================
 const userSessions = new Map();
@@ -119,7 +118,130 @@ function updateSession(phone, values) {
 }
 
 // ==========================================
-// 7. HELPERS
+// 7. GEMINI RETRY + MODEL FALLBACK
+//
+// Handles 503 "high demand", 429 rate limit,
+// and 500 internal errors automatically.
+// ==========================================
+
+// Ordered least-congested first.
+// gemini-2.5-flash is LAST because it is heavily overloaded.
+const MODEL_CHAIN = [
+    "gemini-2.0-flash",
+    "gemini-flash-latest",
+    "gemini-1.5-flash",
+    "gemini-2.5-flash"
+];
+
+const EMBEDDING_MODEL_CHAIN = [
+    "text-embedding-004",
+    "gemini-embedding-2",
+    "embedding-001"
+];
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableError(error) {
+    const status = error?.status;
+    const message = String(error?.message || "");
+
+    return (
+        status === 503 ||
+        status === 429 ||
+        status === 500 ||
+        message.includes("503") ||
+        message.includes("429") ||
+        message.includes("500") ||
+        message.includes("high demand") ||
+        message.includes("overloaded") ||
+        message.includes("Service Unavailable") ||
+        message.includes("rate limit")
+    );
+}
+
+/**
+ * Calls Gemini across multiple models with exponential backoff.
+ *
+ * @param {Array} contentParts  Array passed to generateContent
+ * @param {Object} options      { temperature, maxRetriesPerModel }
+ * @returns {Promise<string>}   Response text
+ */
+async function callGeminiWithRetry(contentParts, options = {}) {
+    const temperature = options.temperature ?? 0.2;
+    const maxRetriesPerModel = options.maxRetriesPerModel ?? 2;
+
+    let lastError = null;
+
+    for (const modelName of MODEL_CHAIN) {
+        for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
+            try {
+                console.log(`🤖 ${modelName} (attempt ${attempt}/${maxRetriesPerModel})`);
+
+                const model = genAI.getGenerativeModel({
+                    model: modelName,
+                    generationConfig: { temperature }
+                });
+
+                const result = await model.generateContent(contentParts);
+                const text = result.response.text();
+
+                console.log(`✅ ${modelName} succeeded`);
+                return text;
+
+            } catch (error) {
+                lastError = error;
+
+                console.warn(
+                    `⚠️ ${modelName} attempt ${attempt} failed ` +
+                    `[${error.status || "?"}]: ${String(error.message).substring(0, 130)}`
+                );
+
+                // Not retryable (404 model missing, 400 bad request) -> next model
+                if (!isRetryableError(error)) break;
+
+                if (attempt < maxRetriesPerModel) {
+                    const delay = 1200 * Math.pow(2, attempt - 1); // 1.2s, 2.4s
+                    console.log(`⏳ Waiting ${delay}ms before retry...`);
+                    await sleep(delay);
+                }
+            }
+        }
+
+        console.log(`↪️ Falling back from ${modelName}`);
+    }
+
+    throw lastError || new Error("All Gemini models failed");
+}
+
+/**
+ * Generates an embedding vector with model fallback.
+ * Returns null instead of throwing, so rule saving never hard-fails.
+ */
+async function generateEmbedding(text) {
+    let lastError = null;
+
+    for (const modelName of EMBEDDING_MODEL_CHAIN) {
+        try {
+            const model = genAI.getGenerativeModel({ model: modelName });
+            const result = await model.embedContent(text);
+
+            console.log(`✅ Embedding via ${modelName}`);
+            return result.embedding.values;
+
+        } catch (error) {
+            lastError = error;
+            console.warn(`⚠️ Embedding ${modelName} failed: ${error.message}`);
+        }
+    }
+
+    console.error("❌ All embedding models failed:", lastError?.message);
+    return null;
+}
+
+// ==========================================
+// 8. GENERAL HELPERS
 // ==========================================
 function withTimeout(promise, ms = 3000) {
     return new Promise((resolve, reject) => {
@@ -238,7 +360,7 @@ function extractImageUrl(body) {
         body.url ||
         "";
 
-    if (typeof rawImageUrl === "string") {
+    if (typeof rawImageUrl === "string" && rawImageUrl.trim()) {
         const match = rawImageUrl.match(/(https?:\/\/[^\s"']+)/);
         if (match) return match[0];
     }
@@ -251,7 +373,7 @@ function extractImageUrl(body) {
 }
 
 // ==========================================
-// 8. AUTH MIDDLEWARE
+// 9. AUTH MIDDLEWARE
 // ==========================================
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -276,7 +398,7 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ==========================================
-// 9. ADD RULE (dashboard)
+// 10. ADD RULE (dashboard)
 // ==========================================
 app.post('/api/add-rule', async (req, res) => {
     try {
@@ -290,27 +412,29 @@ app.post('/api/add-rule', async (req, res) => {
 
         console.log(`🌱 Adding rule: ${documentType} | Center: ${centerId || 'GLOBAL'}`);
 
-        const embeddingModel = genAI.getGenerativeModel({
-            model: "gemini-embedding-2"
-        });
+        // Embedding is optional — rule still saves if it fails
+        const vector = await generateEmbedding(content);
 
-        const embedResult = await embeddingModel.embedContent(content);
-        const vector = embedResult.embedding.values;
+        const insertRow = {
+            document_type: documentType,
+            content: content,
+            center_id: centerId || null
+        };
+
+        if (vector) insertRow.embedding = vector;
 
         const { error } = await supabase
             .from('document_rules')
-            .insert([{
-                document_type: documentType,
-                content: content,
-                embedding: vector,
-                center_id: centerId || null
-            }]);
+            .insert([insertRow]);
 
         if (error) throw error;
 
         return res.json({
             success: true,
-            message: "Rule successfully stored"
+            embedded: Boolean(vector),
+            message: vector
+                ? "Rule stored with embedding"
+                : "Rule stored (embedding unavailable, text search still works)"
         });
 
     } catch (error) {
@@ -320,10 +444,10 @@ app.post('/api/add-rule', async (req, res) => {
 });
 
 // ==========================================
-// 10. CHAT WEBHOOK
+// 11. CHAT WEBHOOK
 //
-// Saved DB rules are returned DIRECTLY.
-// Gemini is used only when nothing is saved.
+// Saved DB rules returned DIRECTLY.
+// Gemini used only when nothing is saved.
 // ==========================================
 app.post('/api/webhook/chat', async (req, res) => {
     console.log("\n========== CHAT WEBHOOK ==========");
@@ -372,56 +496,62 @@ app.post('/api/webhook/chat', async (req, res) => {
 
         // STEP 1: exact match for this center
         if (centerId) {
-            const { data, error } = await supabase
-                .from('document_rules')
-                .select('id, document_type, content, center_id')
-                .eq('center_id', centerId)
-                .ilike('document_type', userMessage)
-                .limit(10);
+            try {
+                const { data, error } = await supabase
+                    .from('document_rules')
+                    .select('id, document_type, content, center_id')
+                    .eq('center_id', centerId)
+                    .ilike('document_type', userMessage)
+                    .limit(10);
 
-            if (error) {
-                console.warn("⚠️ Center rule query error:", error.message);
-            }
+                if (error) console.warn("⚠️ Center rule query:", error.message);
 
-            if (data && data.length > 0) {
-                savedRules = data;
-                console.log(`✅ ${data.length} center-specific rule(s) found`);
+                if (data && data.length > 0) {
+                    savedRules = data;
+                    console.log(`✅ ${data.length} center-specific rule(s)`);
+                }
+            } catch (e) {
+                console.warn("⚠️ Center rule lookup failed:", e.message);
             }
         }
 
         // STEP 2: global exact match
         if (savedRules.length === 0) {
-            const { data, error } = await supabase
-                .from('document_rules')
-                .select('id, document_type, content, center_id')
-                .ilike('document_type', userMessage)
-                .limit(10);
+            try {
+                const { data, error } = await supabase
+                    .from('document_rules')
+                    .select('id, document_type, content, center_id')
+                    .ilike('document_type', userMessage)
+                    .limit(10);
 
-            if (error) {
-                console.warn("⚠️ Global rule query error:", error.message);
-            }
+                if (error) console.warn("⚠️ Global rule query:", error.message);
 
-            if (data && data.length > 0) {
-                savedRules = data;
-                console.log(`✅ ${data.length} global rule(s) found`);
+                if (data && data.length > 0) {
+                    savedRules = data;
+                    console.log(`✅ ${data.length} global rule(s)`);
+                }
+            } catch (e) {
+                console.warn("⚠️ Global rule lookup failed:", e.message);
             }
         }
 
         // STEP 3: partial match
         if (savedRules.length === 0) {
-            const { data, error } = await supabase
-                .from('document_rules')
-                .select('id, document_type, content, center_id')
-                .ilike('document_type', `%${userMessage}%`)
-                .limit(10);
+            try {
+                const { data, error } = await supabase
+                    .from('document_rules')
+                    .select('id, document_type, content, center_id')
+                    .ilike('document_type', `%${userMessage}%`)
+                    .limit(10);
 
-            if (error) {
-                console.warn("⚠️ Partial rule query error:", error.message);
-            }
+                if (error) console.warn("⚠️ Partial rule query:", error.message);
 
-            if (data && data.length > 0) {
-                savedRules = data;
-                console.log(`✅ ${data.length} partial rule(s) found`);
+                if (data && data.length > 0) {
+                    savedRules = data;
+                    console.log(`✅ ${data.length} partial rule(s)`);
+                }
+            } catch (e) {
+                console.warn("⚠️ Partial rule lookup failed:", e.message);
             }
         }
 
@@ -450,19 +580,10 @@ app.post('/api/webhook/chat', async (req, res) => {
             });
         }
 
-        // FALLBACK: Gemini
+        // FALLBACK: Gemini with retry
         console.log("⚠️ No saved rule found. Using Gemini fallback.");
 
-        const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error("TIMEOUT")), 15000);
-        });
-
-        const aiTask = async () => {
-            const chatModel = genAI.getGenerativeModel({
-                model: "gemini-2.5-flash"
-            });
-
-            const prompt = `
+        const prompt = `
 You are an official Akshaya Center assistant in Kerala.
 
 Citizen service request: ${userMessage}
@@ -472,11 +593,28 @@ Keep it WhatsApp friendly and under 120 words.
 End by noting that final requirements should be confirmed at the center.
 `;
 
-            const aiResult = await chatModel.generateContent(prompt);
-            return aiResult.response.text();
-        };
+        let aiReply;
 
-        const aiReply = await Promise.race([aiTask(), timeoutPromise]);
+        try {
+            aiReply = await callGeminiWithRetry([prompt], {
+                temperature: 0.3,
+                maxRetriesPerModel: 2
+            });
+
+        } catch (aiError) {
+            console.error("❌ All Gemini models failed:", aiError.message);
+
+            return res.json({
+                success: true,
+                source: "unavailable",
+                service: userMessage,
+                reply_message:
+                    `📋 *${userMessage}*\n\n` +
+                    `Our assistant is very busy right now.\n\n` +
+                    `📎 You can still upload your document photo and we will verify it, ` +
+                    `or contact your Akshaya Center for the document list. 🙏`
+            });
+        }
 
         return res.json({
             success: true,
@@ -487,29 +625,27 @@ End by noting that final requirements should be confirmed at the center.
         });
 
     } catch (error) {
-        const isTimeout = error.message === "TIMEOUT";
-
-        console.error(
-            `❌ Chat webhook ${isTimeout ? "TIMEOUT" : "ERROR"}:`,
-            error.message
-        );
+        console.error("❌ Chat webhook error:", error.message);
 
         return res.json({
             success: true,
-            reply_message: isTimeout
-                ? "⏳ The service is busy right now. Please select the service again in a moment."
-                : "Sorry, I could not process that. Please select the service again."
+            reply_message:
+                "Sorry, I could not process that. Please select the service again."
         });
     }
 });
 
 // ==========================================
-// 11. DOCUMENT VERIFICATION
+// 12. DOCUMENT VERIFICATION
 //
-// Strict PASS / FAIL against saved rules.
+// PASS / FAIL against saved rules.
 // FAIL -> asks user to retake the photo.
 // ==========================================
 app.post('/api/webhook/document-upload', async (req, res) => {
+
+    // Set to false once everything works in production
+    const DEBUG = true;
+
     try {
         console.log("\n========== DOCUMENT UPLOAD WEBHOOK ==========");
         console.log(JSON.stringify(req.body, null, 2));
@@ -521,7 +657,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const imageUrl = extractImageUrl(req.body);
 
         if (!imageUrl) {
-            console.warn("⚠️ No image URL found in payload.");
+            console.warn("⚠️ No image URL in payload.");
 
             return res.json({
                 success: true,
@@ -533,7 +669,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
             });
         }
 
-        // ---------- 2. Which document type ----------
+        // ---------- 2. Document type ----------
         let serviceRequested = normalizeText(
             req.body.document_type ||
             req.body.documentType ||
@@ -545,11 +681,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         const selectedId = getSelectedListId(req.body);
 
-        if (
-            !serviceRequested &&
-            selectedId &&
-            session.services?.[selectedId]
-        ) {
+        if (!serviceRequested && selectedId && session.services?.[selectedId]) {
             serviceRequested = session.services[selectedId];
         }
 
@@ -569,34 +701,38 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         console.log(`📄 Verifying "${serviceRequested}" | Center: ${centerId || 'GLOBAL'}`);
 
-        // ---------- 3. Load saved rule ----------
+        // ---------- 3. Load saved rules (guarded) ----------
         let rulesText = "";
 
-        if (centerId) {
-            const { data } = await supabase
-                .from('document_rules')
-                .select('content')
-                .eq('center_id', centerId)
-                .ilike('document_type', serviceRequested)
-                .limit(3);
+        try {
+            if (centerId) {
+                const { data } = await supabase
+                    .from('document_rules')
+                    .select('content')
+                    .eq('center_id', centerId)
+                    .ilike('document_type', serviceRequested)
+                    .limit(3);
 
-            if (data && data.length > 0) {
-                rulesText = data.map(r => r.content).join("\n");
-                console.log("✅ Using center-specific rule");
+                if (data && data.length > 0) {
+                    rulesText = data.map(r => r.content).join("\n");
+                    console.log("✅ Center-specific rule loaded");
+                }
             }
-        }
 
-        if (!rulesText) {
-            const { data } = await supabase
-                .from('document_rules')
-                .select('content')
-                .ilike('document_type', serviceRequested)
-                .limit(3);
+            if (!rulesText) {
+                const { data } = await supabase
+                    .from('document_rules')
+                    .select('content')
+                    .ilike('document_type', serviceRequested)
+                    .limit(3);
 
-            if (data && data.length > 0) {
-                rulesText = data.map(r => r.content).join("\n");
-                console.log("✅ Using global rule");
+                if (data && data.length > 0) {
+                    rulesText = data.map(r => r.content).join("\n");
+                    console.log("✅ Global rule loaded");
+                }
             }
+        } catch (ruleErr) {
+            console.warn("⚠️ Rule lookup failed (continuing):", ruleErr.message);
         }
 
         if (!rulesText) {
@@ -604,35 +740,36 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
             rulesText =
                 "The document must be an official government-issued document, " +
-                "fully readable, not blurred or cropped, with visible name, " +
-                "official seal or stamp, and issuing authority signature.";
+                "readable, not severely blurred or cropped, showing the holder's " +
+                "name and identifying details.";
         }
 
-        console.log("⚖️ Rules used:", rulesText);
+        console.log("⚖️ Rules:", rulesText.substring(0, 200));
 
-        // ---------- 4. Download image ----------
+        // ---------- 4. Download image + detect MIME ----------
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 20000);
+        const timeout = setTimeout(() => controller.abort(), 25000);
 
         let imageBuffer;
+        let mimeType = "image/jpeg";
 
         try {
             let response = await fetch(imageUrl, {
                 headers: {
                     'X-API-Key': process.env.KAPSO_API_KEY || '',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': 'image/jpeg,image/png,image/webp,*/*'
+                    'Accept': 'image/*,*/*'
                 },
                 signal: controller.signal
             });
 
             if (!response.ok) {
-                console.log(`⚠️ Auth fetch failed (${response.status}). Retrying plain.`);
+                console.log(`⚠️ Auth fetch ${response.status}. Retrying plain.`);
 
                 response = await fetch(imageUrl, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                        'Accept': 'image/jpeg,image/png,image/webp,*/*'
+                        'Accept': 'image/*,*/*'
                     },
                     signal: controller.signal
                 });
@@ -642,16 +779,30 @@ app.post('/api/webhook/document-upload', async (req, res) => {
                 throw new Error(`Download failed: ${response.status}`);
             }
 
+            const contentType = response.headers.get('content-type') || "";
+
+            if (contentType.includes('png')) mimeType = 'image/png';
+            else if (contentType.includes('webp')) mimeType = 'image/webp';
+            else if (contentType.includes('heic')) mimeType = 'image/heic';
+            else if (contentType.includes('jpeg') || contentType.includes('jpg')) mimeType = 'image/jpeg';
+
             imageBuffer = await response.arrayBuffer();
-            console.log("✅ Image downloaded");
+
+            console.log(`✅ Image downloaded | ${mimeType} | ${imageBuffer.byteLength} bytes`);
+
+            if (imageBuffer.byteLength < 1000) {
+                throw new Error("File too small to be a valid image");
+            }
 
         } catch (downloadErr) {
-            console.error("❌ Image download failed:", downloadErr.message);
+            clearTimeout(timeout);
+            console.error("❌ Download failed:", downloadErr.message);
 
             return res.json({
                 success: true,
                 verification_status: "RETRY",
                 is_valid: false,
+                debug: DEBUG ? `download: ${downloadErr.message}` : undefined,
                 reply_message:
                     "❌ *Could not open your image.*\n\n" +
                     "Please send the photo again using 📎 or 📷."
@@ -662,79 +813,105 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         const base64Image = Buffer.from(imageBuffer).toString('base64');
 
-        // ---------- 5. Strict AI verification ----------
-        const model = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            generationConfig: {
-                temperature: 0.1,
-                responseMimeType: "application/json"
-            }
-        });
-
+        // ---------- 5. AI verification with retry ----------
         const prompt = `
-You are a strict Akshaya Center document verification officer in Kerala.
+You are an Akshaya Center document verification officer in Kerala.
 
-EXPECTED DOCUMENT TYPE:
-${serviceRequested}
+EXPECTED DOCUMENT TYPE: ${serviceRequested}
 
-OFFICIAL ACCEPTANCE RULES:
+ACCEPTANCE RULES:
 ${rulesText}
 
-TASK:
-Inspect the uploaded image and decide if it can be ACCEPTED.
+Judge fairly. Normal phone photos of real documents should PASS.
 
-Set status = "FAIL" if ANY of these are true:
-- Image is blurred, dark, glared, cropped, or text is unreadable
-- It is NOT a "${serviceRequested}" (wrong document type)
-- Any element required by the rules is missing (seal, signature, name, number, date)
-- It is a screenshot, an unreadable photocopy, or a handwritten note
-- The document appears expired according to the rules
+Set status = "FAIL" only if:
+- Text is genuinely unreadable (severe blur, extreme darkness, heavy glare)
+- The document is clearly NOT a "${serviceRequested}"
+- A required element from the rules is clearly absent
+- Major parts of the document are cut off
 
-Set status = "PASS" only if the document is the correct type,
-fully readable, and satisfies every rule above.
+Set status = "PASS" if the document is the correct type and the key
+details are readable. Minor wear, slight angle, coloured background,
+or a laminated card are ACCEPTABLE.
 
-Return ONLY valid JSON in exactly this shape:
+Reply with ONLY this JSON. No markdown fences, no extra text:
 {
-  "status": "PASS" or "FAIL",
-  "detected_document": "what document you actually see",
-  "is_readable": true or false,
-  "missing_or_problem": ["short issue 1", "short issue 2"],
-  "reason": "one short sentence explaining the decision"
+  "status": "PASS",
+  "detected_document": "",
+  "is_readable": true,
+  "missing_or_problem": [],
+  "reason": ""
 }
 `;
 
-        const result = await model.generateContent([
-            prompt,
-            { inlineData: { data: base64Image, mimeType: "image/jpeg" } }
-        ]);
+        let rawText;
 
-        const rawText = result.response.text();
+        try {
+            rawText = await callGeminiWithRetry(
+                [
+                    prompt,
+                    { inlineData: { data: base64Image, mimeType } }
+                ],
+                { temperature: 0.2, maxRetriesPerModel: 2 }
+            );
+
+        } catch (aiError) {
+            console.error("❌ All Gemini models failed:", aiError.message);
+
+            const overloaded = isRetryableError(aiError);
+
+            return res.json({
+                success: true,
+                verification_status: "RETRY",
+                is_valid: false,
+                debug: DEBUG ? `ai: ${aiError.message}` : undefined,
+                reply_message: overloaded
+                    ? "⏳ *Our verification service is very busy right now.*\n\n" +
+                    "Please wait about 30 seconds, then upload your document again. 🙏"
+                    : "⚠️ *Could not check your document right now.*\n\n" +
+                    "Please upload it again in a moment."
+            });
+        }
+
         console.log("🤖 Raw AI output:", rawText);
 
+        // ---------- 6. Parse JSON safely ----------
         let verdict;
 
         try {
-            verdict = JSON.parse(rawText);
-        } catch (parseErr) {
-            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+            const cleaned = String(rawText)
+                .replace(/```json/gi, "")
+                .replace(/```/g, "")
+                .trim();
 
-            verdict = jsonMatch
-                ? JSON.parse(jsonMatch[0])
-                : {
-                    status: "FAIL",
-                    detected_document: "",
-                    reason: "Could not read the document clearly.",
-                    missing_or_problem: []
-                };
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+
+            verdict = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+
+        } catch (parseErr) {
+            console.warn("⚠️ JSON parse failed. Falling back to text scan.");
+
+            const upper = String(rawText).toUpperCase();
+
+            const looksPass =
+                upper.includes('"PASS"') ||
+                (upper.includes("PASS") && !upper.includes("FAIL"));
+
+            verdict = {
+                status: looksPass ? "PASS" : "FAIL",
+                detected_document: "",
+                missing_or_problem: [],
+                reason: "Automatic verification completed."
+            };
         }
 
-        const isPass = String(verdict.status).toUpperCase() === "PASS";
+        const isPass = String(verdict.status || "").trim().toUpperCase() === "PASS";
 
         const problems = Array.isArray(verdict.missing_or_problem)
             ? verdict.missing_or_problem.filter(Boolean)
             : [];
 
-        // ---------- 6. Build WhatsApp reply ----------
+        // ---------- 7. Build WhatsApp reply ----------
         let replyMessage;
 
         if (isPass) {
@@ -767,7 +944,7 @@ Return ONLY valid JSON in exactly this shape:
 
         console.log(`🏁 Verdict: ${isPass ? "PASS ✅" : "FAIL ❌"}`);
 
-        // ---------- 7. Save accepted document ----------
+        // ---------- 8. Save accepted document ----------
         if (isPass) {
             try {
                 await supabase.from('user_documents').insert({
@@ -780,7 +957,7 @@ Return ONLY valid JSON in exactly this shape:
                 console.log("💾 Saved to user_documents");
 
             } catch (saveErr) {
-                console.warn("⚠️ Save failed:", saveErr.message);
+                console.warn("⚠️ Save skipped:", saveErr.message);
             }
         }
 
@@ -794,12 +971,14 @@ Return ONLY valid JSON in exactly this shape:
         });
 
     } catch (error) {
-        console.error("🔥 Document verification crash:", error);
+        console.error("🔥 CRASH:", error);
+        console.error("🔥 STACK:", error.stack);
 
         return res.json({
             success: true,
             verification_status: "RETRY",
             is_valid: false,
+            debug: DEBUG ? `${error.name}: ${error.message}` : undefined,
             reply_message:
                 "⚠️ *Something went wrong while checking your document.*\n\n" +
                 "Please take a clear, well-lit photo and upload it again."
@@ -808,7 +987,7 @@ Return ONLY valid JSON in exactly this shape:
 });
 
 // ==========================================
-// 12. LEGACY CLOUDINARY UPLOAD
+// 13. LEGACY CLOUDINARY UPLOAD
 // ==========================================
 app.post('/api/webhook/document-upload-legacy', async (req, res) => {
     try {
@@ -830,7 +1009,7 @@ app.post('/api/webhook/document-upload-legacy', async (req, res) => {
                     headers: {
                         'X-API-Key': process.env.KAPSO_API_KEY || '',
                         'User-Agent': 'Mozilla/5.0',
-                        'Accept': 'image/jpeg,image/png,image/webp,*/*'
+                        'Accept': 'image/*,*/*'
                     }
                 });
 
@@ -882,7 +1061,7 @@ app.post('/api/webhook/document-upload-legacy', async (req, res) => {
 });
 
 // ==========================================
-// 13. AUTH ENDPOINTS
+// 14. AUTH ENDPOINTS
 // ==========================================
 app.post('/api/auth/login', async (req, res) => {
     try {
@@ -975,7 +1154,7 @@ app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// 14. RULES MANAGEMENT
+// 15. RULES MANAGEMENT
 // ==========================================
 app.get('/api/center-rules/:centerId', async (req, res) => {
     try {
@@ -1022,21 +1201,23 @@ app.put('/api/edit-rule/:id', async (req, res) => {
             return res.status(400).json({ error: "Content is required" });
         }
 
-        const embeddingModel = genAI.getGenerativeModel({
-            model: "gemini-embedding-2"
-        });
+        const vector = await generateEmbedding(content);
 
-        const embedResult = await embeddingModel.embedContent(content);
-        const vector = embedResult.embedding.values;
+        const updateRow = { content: content };
+        if (vector) updateRow.embedding = vector;
 
         const { error } = await supabase
             .from('document_rules')
-            .update({ content: content, embedding: vector })
+            .update(updateRow)
             .eq('id', id);
 
         if (error) throw error;
 
-        return res.json({ success: true, message: "Rule updated" });
+        return res.json({
+            success: true,
+            embedded: Boolean(vector),
+            message: "Rule updated"
+        });
 
     } catch (error) {
         console.error("Edit rule error:", error);
@@ -1045,7 +1226,7 @@ app.put('/api/edit-rule/:id', async (req, res) => {
 });
 
 // ==========================================
-// 15. PUBLIC CENTERS
+// 16. PUBLIC CENTERS
 // ==========================================
 app.get('/api/public/centers', async (req, res) => {
     try {
@@ -1074,7 +1255,7 @@ app.get('/api/public/centers', async (req, res) => {
 });
 
 // ==========================================
-// 16. SEND CENTERS MENU
+// 17. SEND CENTERS MENU
 // ==========================================
 app.post('/api/bot/send-centers-menu', async (req, res) => {
     try {
@@ -1126,9 +1307,7 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
         }
 
         const kapsoOptions = centersList.slice(0, 10).map((center, index) => {
-            const centerCode = safeId(
-                center.center_code || `CENTER_${index + 1}`
-            );
+            const centerCode = safeId(center.center_code || `CENTER_${index + 1}`);
 
             return {
                 // Unique row id — prevents "Duplicated row id"
@@ -1196,7 +1375,7 @@ app.post('/api/bot/send-centers-menu', async (req, res) => {
 });
 
 // ==========================================
-// 17. SEND SERVICES MENU
+// 18. SEND SERVICES MENU
 // ==========================================
 app.post('/api/bot/send-services-menu', async (req, res) => {
     try {
@@ -1237,14 +1416,18 @@ app.post('/api/bot/send-services-menu', async (req, res) => {
 
         // Resolve by center name if only the title came through
         if (!centerId && selectedCenterTitle) {
-            const { data } = await supabase
-                .from('akshaya_centers')
-                .select('center_code')
-                .ilike('center_name', selectedCenterTitle)
-                .limit(1);
+            try {
+                const { data } = await supabase
+                    .from('akshaya_centers')
+                    .select('center_code')
+                    .ilike('center_name', selectedCenterTitle)
+                    .limit(1);
 
-            if (data && data.length > 0) {
-                centerId = data[0].center_code;
+                if (data && data.length > 0) {
+                    centerId = data[0].center_code;
+                }
+            } catch (e) {
+                console.warn("⚠️ Center title lookup failed:", e.message);
             }
         }
 
@@ -1267,38 +1450,42 @@ app.post('/api/bot/send-services-menu', async (req, res) => {
 
         // Center-specific services
         if (centerId) {
-            const { data, error } = await supabase
-                .from('document_rules')
-                .select('document_type')
-                .eq('center_id', centerId);
+            try {
+                const { data, error } = await supabase
+                    .from('document_rules')
+                    .select('document_type')
+                    .eq('center_id', centerId);
 
-            if (error) {
-                console.warn("⚠️ Center service fetch error:", error.message);
-            }
+                if (error) console.warn("⚠️ Center service fetch:", error.message);
 
-            if (data && data.length > 0) {
-                services = [...new Set(
-                    data.map(i => normalizeText(i.document_type)).filter(Boolean)
-                )];
+                if (data && data.length > 0) {
+                    services = [...new Set(
+                        data.map(i => normalizeText(i.document_type)).filter(Boolean)
+                    )];
+                }
+            } catch (e) {
+                console.warn("⚠️ Center services failed:", e.message);
             }
         }
 
-        // Global services (your seeded rules have center_id = null)
+        // Global services (seeded rules have center_id = null)
         if (services.length === 0) {
-            const { data, error } = await supabase
-                .from('document_rules')
-                .select('document_type');
+            try {
+                const { data, error } = await supabase
+                    .from('document_rules')
+                    .select('document_type');
 
-            if (error) {
-                console.warn("⚠️ Global service fetch error:", error.message);
-            }
+                if (error) console.warn("⚠️ Global service fetch:", error.message);
 
-            if (data && data.length > 0) {
-                services = [...new Set(
-                    data.map(i => normalizeText(i.document_type)).filter(Boolean)
-                )];
+                if (data && data.length > 0) {
+                    services = [...new Set(
+                        data.map(i => normalizeText(i.document_type)).filter(Boolean)
+                    )];
 
-                console.log("✅ Using GLOBAL service list");
+                    console.log("✅ Using GLOBAL service list");
+                }
+            } catch (e) {
+                console.warn("⚠️ Global services failed:", e.message);
             }
         }
 
@@ -1390,7 +1577,7 @@ app.post('/api/bot/send-services-menu', async (req, res) => {
 });
 
 // ==========================================
-// 18. DEBUG (remove after testing)
+// 19. DEBUG (remove before production)
 // ==========================================
 app.get('/api/debug/status', async (req, res) => {
     try {
@@ -1407,8 +1594,10 @@ app.get('/api/debug/status', async (req, res) => {
                 .replace("https://", "")
                 .replace(".supabase.co", ""),
             postgres_connected: isDbConnected,
+            gemini_key_set: Boolean(process.env.GEMINI_API_KEY),
             kapso_key_set: Boolean(process.env.KAPSO_API_KEY),
             kapso_phone_id_set: Boolean(process.env.KAPSO_PHONE_ID),
+            model_chain: MODEL_CHAIN,
             total_rules: rules?.length || 0,
             rules: rules || [],
             total_centers: centers?.length || 0,
@@ -1421,8 +1610,36 @@ app.get('/api/debug/status', async (req, res) => {
     }
 });
 
+// Tests which Gemini models are actually reachable on your key
+app.get('/api/debug/gemini', async (req, res) => {
+    const results = [];
+
+    for (const modelName of MODEL_CHAIN) {
+        try {
+            const model = genAI.getGenerativeModel({ model: modelName });
+            const result = await model.generateContent(["Reply with the single word: OK"]);
+
+            results.push({
+                model: modelName,
+                ok: true,
+                response: result.response.text().trim().substring(0, 40)
+            });
+
+        } catch (error) {
+            results.push({
+                model: modelName,
+                ok: false,
+                status: error.status || null,
+                error: String(error.message).substring(0, 160)
+            });
+        }
+    }
+
+    return res.json({ results });
+});
+
 // ==========================================
-// 19. HEALTH
+// 20. HEALTH
 // ==========================================
 app.get('/health', (req, res) => {
     res.status(200).json({
@@ -1432,7 +1649,7 @@ app.get('/health', (req, res) => {
 });
 
 // ==========================================
-// 20. START
+// 21. START
 // ==========================================
 const PORT = process.env.PORT || 5000;
 

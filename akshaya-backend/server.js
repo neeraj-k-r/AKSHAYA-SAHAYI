@@ -124,18 +124,33 @@ function updateSession(phone, values) {
 // and 500 internal errors automatically.
 // ==========================================
 
-// Ordered least-congested first.
-// gemini-2.5-flash is LAST because it is heavily overloaded.
+/*
+  VERIFIED against this API key on /api/debug/gemini:
+
+    gemini-flash-latest   -> WORKS  ✅
+    gemini-2.5-flash      -> WORKS  ✅
+    gemini-2.0-flash      -> 404    ❌ (not available)
+    gemini-1.5-flash      -> 404    ❌ (not available)
+
+  gemini-flash-latest is FIRST because it auto-routes to a
+  healthy version and is less likely to return 503.
+
+  gemini-flash-lite-latest is a harmless extra safety net —
+  if it 404s the loop simply moves on.
+*/
 const MODEL_CHAIN = [
-    "gemini-2.0-flash",
     "gemini-flash-latest",
-    "gemini-1.5-flash",
-    "gemini-2.5-flash"
+    "gemini-2.5-flash",
+    "gemini-flash-lite-latest"
 ];
 
+/*
+  gemini-embedding-2 does NOT exist and always 404s.
+  These are the real embedding model names.
+*/
 const EMBEDDING_MODEL_CHAIN = [
     "text-embedding-004",
-    "gemini-embedding-2",
+    "gemini-embedding-001",
     "embedding-001"
 ];
 
@@ -232,7 +247,9 @@ async function generateEmbedding(text) {
 
         } catch (error) {
             lastError = error;
-            console.warn(`⚠️ Embedding ${modelName} failed: ${error.message}`);
+            console.warn(
+                `⚠️ Embedding ${modelName} failed: ${String(error.message).substring(0, 100)}`
+            );
         }
     }
 
@@ -1598,6 +1615,7 @@ app.get('/api/debug/status', async (req, res) => {
             kapso_key_set: Boolean(process.env.KAPSO_API_KEY),
             kapso_phone_id_set: Boolean(process.env.KAPSO_PHONE_ID),
             model_chain: MODEL_CHAIN,
+            embedding_chain: EMBEDDING_MODEL_CHAIN,
             total_rules: rules?.length || 0,
             rules: rules || [],
             total_centers: centers?.length || 0,
@@ -1610,7 +1628,7 @@ app.get('/api/debug/status', async (req, res) => {
     }
 });
 
-// Tests which Gemini models are actually reachable on your key
+// Tests which models in MODEL_CHAIN actually respond
 app.get('/api/debug/gemini', async (req, res) => {
     const results = [];
 
@@ -1636,6 +1654,46 @@ app.get('/api/debug/gemini', async (req, res) => {
     }
 
     return res.json({ results });
+});
+
+// Lists EVERY model your API key can actually use
+app.get('/api/debug/list-models', async (req, res) => {
+    try {
+        const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
+        );
+
+        const data = await response.json();
+
+        if (!data.models) {
+            return res.status(500).json({
+                error: "No models returned",
+                raw: data
+            });
+        }
+
+        const generation = [];
+        const embedding = [];
+
+        for (const model of data.models) {
+            const name = model.name.replace("models/", "");
+            const methods = model.supportedGenerationMethods || [];
+
+            if (methods.includes("generateContent")) generation.push(name);
+            if (methods.includes("embedContent")) embedding.push(name);
+        }
+
+        return res.json({
+            total: data.models.length,
+            currently_using_generation: MODEL_CHAIN,
+            currently_using_embedding: EMBEDDING_MODEL_CHAIN,
+            available_generateContent: generation,
+            available_embedContent: embedding
+        });
+
+    } catch (error) {
+        return res.status(500).json({ error: error.message });
+    }
 });
 
 // ==========================================

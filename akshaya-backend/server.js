@@ -590,6 +590,24 @@ app.post('/api/webhook/chat', async (req, res) => {
             }
         }
 
+        // A service selection starts a NEW application: clear previously
+        // accepted supporting docs so "remaining" starts full again.
+        // Plain questions must NOT wipe mid-application progress, so only
+        // reset when the message is a known service or matched saved rules.
+        const knownServices = Object.values(session.services || {})
+            .map(s => String(s).toLowerCase().trim());
+        const isServiceStart =
+            knownServices.includes(String(userMessage).toLowerCase().trim()) ||
+            savedRules.length > 0;
+
+        if (isServiceStart) {
+            const freshKey = String(userMessage || "").toLowerCase().trim();
+            const keptAccepted = { ...((getSession(phone).acceptedDocs) || {}) };
+            if (freshKey) keptAccepted[freshKey] = [];
+            updateSession(phone, { acceptedDocs: keptAccepted });
+            console.log(`🆕 New application for "${userMessage}" — accepted docs reset`);
+        }
+
         // RETURN SAVED RULES DIRECTLY (no AI rewriting)
         if (savedRules.length > 0) {
             const rulesText = savedRules

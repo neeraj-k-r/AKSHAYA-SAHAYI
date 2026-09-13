@@ -514,6 +514,36 @@ app.post('/api/add-rule', async (req, res) => {
     }
 });
 
+app.put('/api/edit-rule/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { content } = req.body;
+
+        if (!content) {
+            return res.status(400).json({ error: "content is required" });
+        }
+
+        // Embedding is optional — rule still saves if it fails
+        const vector = await generateEmbedding(content);
+
+        const updateRow = { content };
+        if (vector) updateRow.embedding = vector;
+
+        const { error } = await supabase
+            .from('document_rules')
+            .update(updateRow)
+            .eq('id', id);
+
+        if (error) throw error;
+
+        return res.json({ success: true, embedded: Boolean(vector) });
+
+    } catch (error) {
+        console.error("❌ Edit Rule Error:", error);
+        return res.status(500).json({ error: "Failed to update rule" });
+    }
+});
+
 // ==========================================
 // 11. CHAT WEBHOOK
 //

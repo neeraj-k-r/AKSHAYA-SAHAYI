@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { API_BASE, authHeaders } from './api';
+import { API_BASE } from './api';
 import AddRuleForm from './AddRuleForm';
 import './App.css';
 
@@ -87,10 +87,16 @@ export default function App() {
     }
 
     async function loadRequests() {
+        // Use the live login-state token (not localStorage) so the
+        // Authorization header is guaranteed whenever this screen shows.
+        const tok = token || localStorage.getItem('token') || '';
+        if (!tok) return;
         setLoading(true);
         setFetchError('');
         try {
-            const res = await fetch(`${API_BASE}/api/dashboard/requests`, { headers: authHeaders() });
+            const res = await fetch(`${API_BASE}/api/dashboard/requests`, {
+                headers: { Authorization: `Bearer ${tok}` }
+            });
             const data = await res.json();
             if (!res.ok) {
                 if (res.status === 401 || res.status === 403) { logout(); return; }
@@ -118,7 +124,7 @@ export default function App() {
         try {
             const res = await fetch(`${API_BASE}/api/admin/create-center`, {
                 method: 'POST',
-                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(newCenter)
             });
             const data = await res.json();

@@ -1,187 +1,329 @@
-import React, { useState, useEffect } from 'react';
-import AddRuleForm from './AddRuleForm'; // Your AI Rule Form Component
+import { useState, useEffect, useMemo } from 'react';
+import './App.css';
+import { API_BASE, authHeaders } from './api';
+import AddRuleForm from './AddRuleForm';
+
+// Backend stores new entries as "label|url"; legacy rows are plain URLs.
+function parseDoc(entry, index) {
+    const text = String(entry || '');
+    const sep = text.indexOf('|');
+    if (sep > 0 && /^https?:\/\//i.test(text.slice(sep + 1).trim())) {
+        return { label: text.slice(0, sep).trim() || `Doc ${index + 1}`, url: text.slice(sep + 1).trim() };
+    }
+    return { label: `Doc ${index + 1}`, url: text };
+}
+
+function timeAgo(value) {
+    if (!value) return '';
+    const diff = Date.now() - new Date(value).getTime();
+    if (Number.isNaN(diff) || diff < 0) return '';
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days}d ago`;
+    return new Date(value).toLocaleDateString();
+}
+
+function avatarLetter(req) {
+    const base = (req.citizen_name || req.citizen_phone || '?').trim();
+    return (base.charAt(0) || '?').toUpperCase();
+}
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
-  const [role, setRole] = useState(localStorage.getItem('role') || '');
+    const [token, setToken] = useState(localStorage.getItem('token') || '');
+    const [role, setRole] = useState(localStorage.getItem('role') || '');
+    const [centerCode, setCenterCode] = useState(localStorage.getItem('center_code') || '');
 
-  // Login States
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [loginError, setLoginError] = useState('');
 
-  // Data State
-  const [requests, setRequests] = useState([]);
-  const [fetchError, setFetchError] = useState('');
+    const [requests, setRequests] = useState([]);
+    const [fetchError, setFetchError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-  // Admin Form States
-  const [newCode, setNewCode] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newDistrict, setNewDistrict] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newPass, setNewPass] = useState('');
+    const [search, setSearch] = useState('');
+    const [serviceFilter, setServiceFilter] = useState('All');
+    const [showCreate, setShowCreate] = useState(false);
+    const [showRules, setShowRules] = useState(false);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
+    const [newCode, setNewCode] = useState('');
+    const [newName, setNewName] = useState('');
+    const [newDistrict, setNewDistrict] = useState('');
+    const [newEmail, setNewEmail] = useState('');
+    const [newPass, setNewPass] = useState('');
 
-      const data = await res.json();
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setLoginError('');
+        try {
+            const res = await fetch(`${API_BASE}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
+            if (data.token) {
+                localStorage.setItem('token', data.token);
+                localStorage.setItem('role', data.role);
+                localStorage.setItem('center_code', data.center_code || '');
+                setToken(data.token);
+                setRole(data.role);
+                setCenterCode(data.center_code || '');
+            } else {
+                setLoginError(data.message || 'Invalid login credentials');
+            }
+        } catch {
+            setLoginError('Could not reach the server. Check your connection.');
+        }
+    };
 
-      if (data.token) {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('role', data.role);
+    const handleLogout = () => {
+        localStorage.clear();
+        setToken('');
+        setRole('');
+        setCenterCode('');
+        setRequests([]);
+    };
 
-        // ✅ THE FIX: This line catches the center_code and saves it!
-        localStorage.setItem('center_code', data.center_code);
-
-        setToken(data.token);
-        setRole(data.role);
-      } else {
-        alert(data.message || "Invalid login credentials");
-      }
-    } catch (error) {
-      console.error("Login Error:", error);
-      alert("❌ Network Error: Could not connect to the backend server. Make sure your local Node.js server is running (node server.js)!");
-    }
-  };
-
-  const handleCreateCenter = async (e) => {
-    e.preventDefault();
-    const res = await fetch('http://localhost:5000/api/admin/create-center', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      body: JSON.stringify({
-        center_code: newCode,
-        center_name: newName || `Akshaya ${newCode}`,
-        district: newDistrict || 'Kerala',
-        email: newEmail,
-        password: newPass
-      }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      alert(data.message || 'Centre Created & Auto-Synced with WhatsApp / Kapso!');
-      setNewCode(''); setNewName(''); setNewDistrict(''); setNewEmail(''); setNewPass('');
-    } else {
-      alert(data.error || data.message);
-    }
-  };
-
-  useEffect(() => {
-    if (token) {
-      fetch('http://localhost:5000/api/dashboard/requests', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      })
-        .then(async (res) => {
-          // Check if the response is OK before parsing JSON
-          if (!res.ok) {
-            const errorText = await res.text();
-            throw new Error(`Error ${res.status}: ${errorText}`);
-          }
-          return res.json();
-        })
-        .then(data => {
-          if (Array.isArray(data)) {
-            setRequests(data);
-            setFetchError('');
-          } else {
+    const loadRequests = async () => {
+        if (!token) return;
+        setLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/dashboard/requests`, {
+                headers: authHeaders(token)
+            });
+            if (!res.ok) {
+                const errorText = await res.text();
+                throw new Error(`Error ${res.status}: ${errorText}`);
+            }
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                setRequests(data);
+                setFetchError('');
+            } else {
+                setRequests([]);
+                setFetchError(data.error || data.message || 'Failed to load requests.');
+            }
+        } catch (err) {
             setRequests([]);
-            setFetchError(data.error || data.message || 'Failed to load requests from server.');
-          }
-        })
-        .catch(err => {
-          setRequests([]);
-          setFetchError(err.message);
+            setFetchError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        // Initial load on login: fetch-once in effect is intentional.
+        // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+        loadRequests();
+    }, [token]);
+
+    const handleCreateCenter = async (e) => {
+        e.preventDefault();
+        const res = await fetch(`${API_BASE}/api/admin/create-center`, {
+            method: 'POST',
+            headers: authHeaders(token),
+            body: JSON.stringify({
+                center_code: newCode,
+                center_name: newName || `Akshaya ${newCode}`,
+                district: newDistrict || 'Kerala',
+                email: newEmail,
+                password: newPass
+            })
         });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message || 'Centre created & synced!');
+            setNewCode(''); setNewName(''); setNewDistrict(''); setNewEmail(''); setNewPass('');
+            setShowCreate(false);
+        } else {
+            alert(data.error || data.message);
+        }
+    };
+
+    const services = useMemo(() => {
+        const set = new Set();
+        requests.forEach(r => { if (r.category) set.add(r.category); });
+        return ['All', ...[...set].sort()];
+    }, [requests]);
+
+    const stats = useMemo(() => {
+        const citizens = new Set(requests.map(r => r.citizen_phone).filter(Boolean));
+        const docs = requests.reduce((n, r) => n + (Array.isArray(r.document_urls) ? r.document_urls.length : 0), 0);
+        return {
+            total: requests.length,
+            services: services.length - 1,
+            citizens: citizens.size,
+            docs
+        };
+    }, [requests, services]);
+
+    const visible = useMemo(() => {
+        const q = search.trim().toLowerCase();
+        return requests.filter(r => {
+            if (serviceFilter !== 'All' && r.category !== serviceFilter) return false;
+            if (!q) return true;
+            return [r.citizen_name, r.citizen_phone, r.token_number, r.category, r.assigned_center_code]
+                .some(v => String(v || '').toLowerCase().includes(q));
+        });
+    }, [requests, search, serviceFilter]);
+
+    const grouped = useMemo(() => {
+        const acc = {};
+        visible.forEach(req => {
+            const key = req.category || 'Other';
+            acc[key] = acc[key] || [];
+            acc[key].push(req);
+        });
+        Object.values(acc).forEach(list =>
+            list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+        );
+        return Object.entries(acc).sort((a, b) => a[0].localeCompare(b[0]));
+    }, [visible]);
+
+    if (!token) {
+        return (
+            <div className="login-wrap">
+                <div className="login-card">
+                    <div className="login-logo">🏛️</div>
+                    <h1>Akshaya Sahayi</h1>
+                    <p className="muted">Centre dashboard sign in</p>
+                    <form onSubmit={handleLogin}>
+                        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
+                        <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+                        {loginError && <div className="login-error">{loginError}</div>}
+                        <button type="submit" className="btn-primary">Login</button>
+                    </form>
+                </div>
+            </div>
+        );
     }
-  }, [token]);
 
-  if (!token) {
     return (
-      <div style={{ padding: '50px', fontFamily: 'sans-serif', maxWidth: '400px', margin: 'auto' }}>
-        <h2>Akshaya Portal Login</h2>
-        <form onSubmit={handleLogin}>
-          <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required style={{ width: '100%', padding: '10px', marginBottom: '10px' }} />
-          <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={{ width: '100%', padding: '10px', marginBottom: '10px' }} />
-          <button type="submit" style={{ padding: '10px 20px', width: '100%', background: '#0056b3', color: 'white' }}>Login</button>
-        </form>
-      </div>
-    );
-  }
+        <div className="dash">
+            <header className="dash-header">
+                <div>
+                    <h1>🏛️ Akshaya Sahayi</h1>
+                    <p className="muted">
+                        {role === 'superadmin' ? 'Administrator' : `Centre ${centerCode || ''}`}
+                    </p>
+                </div>
+                <div className="header-actions">
+                    <button className="btn-ghost" onClick={loadRequests} disabled={loading}>
+                        {loading ? 'Refreshing…' : '↻ Refresh'}
+                    </button>
+                    <button className="btn-ghost" onClick={handleLogout}>Logout</button>
+                </div>
+            </header>
 
-  const grouped = requests.reduce((acc, req) => {
-    acc[req.category] = acc[req.category] || [];
-    acc[req.category].push(req);
-    return acc;
-  }, {});
+            {fetchError && <div className="alert-error">⚠️ {fetchError}</div>}
 
-  return (
-    <div style={{ padding: '30px', fontFamily: 'sans-serif', backgroundColor: '#f4f6f8', minHeight: '100vh' }}>
-      <h1>Akshaya Dashboard {role === 'superadmin' ? '(ADMIN)' : ''}</h1>
-      <button onClick={() => { localStorage.clear(); setToken(''); setRole(''); }} style={{ marginBottom: '20px' }}>Logout</button>
+            <section className="stats">
+                <div className="stat"><span className="stat-num">{stats.total}</span><span className="stat-label">Submissions</span></div>
+                <div className="stat"><span className="stat-num">{stats.services}</span><span className="stat-label">Services</span></div>
+                <div className="stat"><span className="stat-num">{stats.citizens}</span><span className="stat-label">Citizens</span></div>
+                <div className="stat"><span className="stat-num">{stats.docs}</span><span className="stat-label">Documents</span></div>
+            </section>
 
-      {fetchError && (
-        <div style={{ background: '#ffebee', color: '#c62828', padding: '15px', borderRadius: '5px', marginBottom: '20px', border: '1px solid #ef9a9a' }}>
-          <strong>⚠️ Server Error:</strong> {fetchError}
-        </div>
-      )}
-
-      {role === 'superadmin' && (
-        <div style={{ background: '#fff', padding: '20px', marginBottom: '30px', border: '2px solid #0056b3', borderRadius: '6px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-            <h3 style={{ margin: 0 }}>Create Regional Centre Account</h3>
-            <span style={{ background: '#e8f5e9', color: '#2e7d32', padding: '4px 10px', borderRadius: '12px', fontSize: '13px', fontWeight: 'bold' }}>
-              ⚡ Auto-Syncs with Kapso / WhatsApp Bot
-            </span>
-          </div>
-          <form onSubmit={handleCreateCenter} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            <input type="text" placeholder="Code (e.g. KNR-105)" value={newCode} onChange={e => setNewCode(e.target.value)} required style={{ padding: '8px', flex: '1' }} />
-            <input type="text" placeholder="Centre Name (e.g. Kannur North)" value={newName} onChange={e => setNewName(e.target.value)} style={{ padding: '8px', flex: '1' }} />
-            <input type="text" placeholder="District (e.g. Kannur)" value={newDistrict} onChange={e => setNewDistrict(e.target.value)} style={{ padding: '8px', flex: '1' }} />
-            <input type="email" placeholder="Email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required style={{ padding: '8px', flex: '1' }} />
-            <input type="password" placeholder="Password" value={newPass} onChange={e => setNewPass(e.target.value)} required style={{ padding: '8px', flex: '1' }} />
-            <button type="submit" style={{ padding: '8px 20px', background: '#0056b3', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
-              Create & Sync
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* ======================================================== */}
-      {/* 🚀 NEW: RAG DOCUMENT RULES UPLOAD FORM                   */}
-      {/* ======================================================== */}
-      <div style={{ background: '#fff', marginBottom: '30px', borderRadius: '6px' }}>
-        <AddRuleForm />
-      </div>
-
-      {Object.keys(grouped).map((category) => (
-        <div key={category} style={{ background: '#fff', padding: '20px', marginBottom: '20px' }}>
-          <h2 style={{ color: '#0056b3' }}>📁 {category.toUpperCase()}</h2>
-          <table width="100%" cellPadding="10" style={{ textAlign: 'left', borderCollapse: 'collapse' }}>
-            <thead style={{ background: '#eee' }}>
-              <tr><th>Token</th><th>Centre</th><th>Phone</th><th>Documents</th></tr>
-            </thead>
-            <tbody>
-              {grouped[category].map((req) => (
-                <tr key={req.token_number} style={{ borderBottom: '1px solid #ddd' }}>
-                  <td><b>{req.token_number}</b></td>
-                  <td>{req.assigned_center_code}</td>
-                  <td>{req.citizen_phone}</td>
-                  <td>
-                    {req.document_urls.map((url, idx) => (
-                      <a key={idx} href={url} target="_blank" rel="noreferrer" style={{ marginRight: '10px' }}>📄 Doc {idx + 1}</a>
+            <section className="toolbar">
+                <input
+                    className="search"
+                    placeholder="🔍 Search name, phone, token, service…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                />
+                <div className="chips">
+                    {services.map(s => (
+                        <button
+                            key={s}
+                            className={serviceFilter === s ? 'chip active' : 'chip'}
+                            onClick={() => setServiceFilter(s)}
+                        >
+                            {s}
+                        </button>
                     ))}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                </div>
+            </section>
+
+            {role === 'superadmin' && (
+                <section className="panel">
+                    <button className="panel-toggle" onClick={() => setShowCreate(v => !v)}>
+                        {showCreate ? '▾' : '▸'} Create regional centre account
+                    </button>
+                    {showCreate && (
+                        <form onSubmit={handleCreateCenter} className="create-form">
+                            <input placeholder="Code (e.g. KNR-105)" value={newCode} onChange={e => setNewCode(e.target.value)} required />
+                            <input placeholder="Centre name" value={newName} onChange={e => setNewName(e.target.value)} />
+                            <input placeholder="District" value={newDistrict} onChange={e => setNewDistrict(e.target.value)} />
+                            <input type="email" placeholder="Email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required />
+                            <input type="password" placeholder="Password" value={newPass} onChange={e => setNewPass(e.target.value)} required />
+                            <button type="submit" className="btn-primary">Create &amp; Sync</button>
+                        </form>
+                    )}
+                </section>
+            )}
+
+            <section className="panel">
+                <button className="panel-toggle" onClick={() => setShowRules(v => !v)}>
+                    {showRules ? '▾' : '▸'} Document guidelines for {centerCode || 'your centre'}
+                </button>
+                {showRules && <AddRuleForm />}
+            </section>
+
+            {grouped.length === 0 && !loading && (
+                <div className="empty">No submissions yet. Verified WhatsApp documents will appear here.</div>
+            )}
+
+            {grouped.map(([category, list]) => (
+                <section key={category} className="service-group">
+                    <h2>📁 {category} <span className="count">{list.length}</span></h2>
+                    <div className="cards">
+                        {list.map(req => {
+                            const docs = Array.isArray(req.document_urls) ? req.document_urls : [];
+                            return (
+                                <article key={req.id || req.token_number} className="req-card">
+                                    <div className="req-top">
+                                        <div className="avatar">{avatarLetter(req)}</div>
+                                        <div className="req-user">
+                                            <strong>{req.citizen_name || req.citizen_phone || 'Unknown'}</strong>
+                                            {req.citizen_name && req.citizen_phone && (
+                                                <a className="phone" href={`https://wa.me/${String(req.citizen_phone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer">
+                                                    📱 {req.citizen_phone}
+                                                </a>
+                                            )}
+                                            {!req.citizen_name && <span className="muted">name not shared</span>}
+                                        </div>
+                                        <span className="time" title={req.created_at ? new Date(req.created_at).toLocaleString() : ''}>
+                                            {timeAgo(req.created_at)}
+                                        </span>
+                                    </div>
+                                    <div className="req-meta">
+                                        <span className="pill">🎫 {req.token_number}</span>
+                                        <span className="pill">🏢 {req.assigned_center_code}</span>
+                                    </div>
+                                    <div className="docs">
+                                        {docs.length === 0 && <span className="muted">No documents attached</span>}
+                                        {docs.map((d, idx) => {
+                                            const { label, url } = parseDoc(d, idx);
+                                            return url ? (
+                                                <a key={idx} className="doc-chip" href={url} target="_blank" rel="noreferrer">
+                                                    📄 {label}
+                                                </a>
+                                            ) : (
+                                                <span key={idx} className="doc-chip muted">📄 {label}</span>
+                                            );
+                                        })}
+                                    </div>
+                                </article>
+                            );
+                        })}
+                    </div>
+                </section>
+            ))}
         </div>
-      ))}
-    </div>
-  );
+    );
 }

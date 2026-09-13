@@ -36,6 +36,13 @@ async function setupDatabase() {
             );
         `);
 
+        // Migration for DBs created before the dashboard upgrade:
+        // stores the WhatsApp display name alongside the phone number.
+        await db.query(`
+            ALTER TABLE service_requests
+            ADD COLUMN IF NOT EXISTS citizen_name VARCHAR(100);
+        `);
+
         console.log("Tables created successfully.");
 
         // Check if admin user exists

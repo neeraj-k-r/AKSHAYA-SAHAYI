@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
+import { API_BASE } from './api';
 
 export default function AddRuleForm() {
     const [documentType, setDocumentType] = useState('Income Certificate');
@@ -11,7 +12,7 @@ export default function AddRuleForm() {
     const [editContent, setEditContent] = useState('');
 
     const centerId = localStorage.getItem('center_code');
-    const API_BASE_URL = 'https://akshaya-sahayi.onrender.com';
+    const API_BASE_URL = API_BASE;
 
     // Fetch active rules ONLY for this logged-in center
     const fetchRules = async () => {
@@ -28,6 +29,8 @@ export default function AddRuleForm() {
     };
 
     useEffect(() => {
+        // Initial load on login: fetch-once in effect is intentional.
+        // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
         fetchRules();
     }, [centerId]);
 
@@ -57,7 +60,7 @@ export default function AddRuleForm() {
             } else {
                 setStatus(`❌ Error: ${result.error || 'Failed to save rule'}`);
             }
-        } catch (error) {
+        } catch {
             setStatus('❌ Network error. Check server status.');
         }
     };
@@ -79,7 +82,7 @@ export default function AddRuleForm() {
             } else {
                 setStatus('❌ Failed to update rule.');
             }
-        } catch (error) {
+        } catch {
             setStatus('❌ Network error while updating.');
         }
     };

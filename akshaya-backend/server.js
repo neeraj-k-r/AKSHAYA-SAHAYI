@@ -104,6 +104,7 @@ function getSession(phone) {
             centerName: null,
             services: {},
             lastService: null,
+            senderName: null,
             // serviceKey -> [canonicalDocKey, ...] of accepted supporting docs
             acceptedDocs: {}
         });
@@ -350,6 +351,37 @@ function getPhoneFromBody(body) {
         body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from ||
         ""
     );
+}
+
+/*
+  Best-effort WhatsApp display name (profile pushname / contact name).
+  Returns "" when the payload carries no name — callers fall back to phone.
+  NOTE: the Kapso workflow must forward a sender_name field for this to
+  be populated; otherwise only the phone number is shown on the dashboard.
+*/
+function getSenderName(body) {
+    if (!body || typeof body !== "object") return "";
+
+    const nested = body.entry?.[0]?.changes?.[0]?.value;
+    const contactName = nested?.contacts?.[0]?.profile?.name || "";
+
+    const raw =
+        body.sender_name ||
+        body.senderName ||
+        body.pushname ||
+        body.pushName ||
+        body.profile?.name ||
+        body.contact?.name ||
+        body.sender?.name ||
+        body.conversation?.sender_name ||
+        body.message?.pushname ||
+        contactName ||
+        "";
+
+    const name = String(raw || "").trim().substring(0, 100);
+    // Guard against numeric-only "names" (that's just the phone again)
+    if (!name || /^\+?\d[\d\s-]*$/.test(name)) return "";
+    return name;
 }
 
 function getSelectedListId(body) {
@@ -709,6 +741,12 @@ app.post('/api/webhook/document-upload', async (req, res) => {
 
         const phone = getPhoneFromBody(req.body);
         const session = getSession(phone);
+
+        // Remember the sender's display name for the dashboard ("" if absent)
+        const senderName = getSenderName(req.body) || session.senderName || "";
+        if (getSenderName(req.body)) {
+            updateSession(phone, { senderName: getSenderName(req.body) });
+        }
 
         // ---------- 1. Image URL ----------
         const imageUrl = extractImageUrl(req.body);
@@ -1095,6 +1133,60 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
 
             } catch (saveErr) {
                 console.warn("⚠️ Save skipped:", saveErr.message);
+            }
+
+            // Mirror into Postgres service_requests so the center dashboard
+            // lists every verified WhatsApp submission (legacy flow only
+            // wrote here, so the new flow was invisible on the dashboard).
+            // document_urls entries are "label|url" (dashboard parses both
+            // this and legacy plain-URL entries).
+            if (isDbConnected) {
+                const dashToken =
+                    `WA-${cleanPhoneNumber(phone).slice(-10)}-${Date.now().toString().slice(-6)}`;
+                const docLabel = verdict.detected_document || verdict.matched_requirement || serviceRequested;
+
+                try {
+                    await db.query(
+                        `INSERT INTO service_requests
+                         (token_number, category, citizen_phone, citizen_name, document_urls, assigned_center_code)
+                         VALUES ($1, $2, $3, $4, $5, $6)`,
+                        [
+                            dashToken,
+                            serviceRequested,
+                            phone,
+                            senderName || null,
+                            [`${docLabel}|${imageUrl}`],
+                            centerId || 'GLOBAL'
+                        ]
+                    );
+
+                    console.log("💾 Saved to service_requests for dashboard");
+
+                } catch (dashErr) {
+                    // Older DBs lack the citizen_name column — retry without it
+                    if (/citizen_name/i.test(dashErr.message)) {
+                        try {
+                            await db.query(
+                                `INSERT INTO service_requests
+                                 (token_number, category, citizen_phone, document_urls, assigned_center_code)
+                                 VALUES ($1, $2, $3, $4, $5)`,
+                                [
+                                    dashToken,
+                                    serviceRequested,
+                                    phone,
+                                    [`${docLabel}|${imageUrl}`],
+                                    centerId || 'GLOBAL'
+                                ]
+                            );
+
+                            console.log("💾 Saved to service_requests (legacy schema)");
+                        } catch (retryErr) {
+                            console.warn("⚠️ Dashboard save skipped:", retryErr.message);
+                        }
+                    } else {
+                        console.warn("⚠️ Dashboard save skipped:", dashErr.message);
+                    }
+                }
             }
         }
 

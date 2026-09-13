@@ -103,7 +103,9 @@ function getSession(phone) {
             centerId: null,
             centerName: null,
             services: {},
-            lastService: null
+            lastService: null,
+            // serviceKey -> [canonicalDocKey, ...] of accepted supporting docs
+            acceptedDocs: {}
         });
     }
 
@@ -306,6 +308,22 @@ function normalizeText(value) {
 */
 function normalizeCenterId(value) {
     return normalizeText(value).replace(/^center_\d+_/i, "");
+}
+
+/*
+  Canonical key for a supporting document name, so "aadhar",
+  "Aadhaar Card" and "1. Aadhaar Card - ..." all count as the SAME item.
+  Used to track which requirements are already submitted.
+*/
+function canonicalDocKey(value) {
+    const v = String(value || "").toLowerCase();
+    if (/aadhar|aadhaar|adhar|\buid\b/.test(v)) return "aadhaar";
+    if (/caste|community/.test(v)) return "caste";
+    if (/ration/.test(v)) return "ration";
+    if (/income/.test(v)) return "income";
+    if (/(^|[^a-z])pan([^a-z]|$)/.test(v)) return "pan";
+    if (/bank|passbook/.test(v)) return "passbook";
+    return v.trim();
 }
 
 function getPhoneFromBody(body) {
@@ -947,14 +965,46 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             : [];
 
         // ---------- 7. Build WhatsApp reply ----------
-        const requiredList = rulesText
-            .split(/[,\n;]+/)
+        // Multi-line rules split per line (commas inside descriptions are kept);
+        // single-line rules like "aadhar,caste" split on commas.
+        const requiredList = (
+            rulesText.includes("\n")
+                ? rulesText.split(/\n+/)
+                : rulesText.split(/[,;]+/)
+        )
             .map(s => s.trim())
-            .filter(Boolean);
+            // Drop header lines like "Required supporting documents:"
+            .filter(s => s && !/:$/.test(s));
+
+        // Supporting docs already accepted for THIS service (earlier uploads),
+        // so "remaining" shrinks across uploads instead of repeating.
+        const serviceKey = String(serviceRequested || "").toLowerCase().trim();
+        const previouslyAccepted =
+            (session.acceptedDocs && session.acceptedDocs[serviceKey]) || [];
+        const currentKey = canonicalDocKey(verdict.matched_requirement);
+
+        const acceptedKeys = new Set(
+            [...previouslyAccepted, ...(isPass && currentKey ? [currentKey] : [])]
+                .filter(Boolean)
+        );
+
+        const remaining = requiredList.filter(
+            r => !acceptedKeys.has(canonicalDocKey(r))
+        );
 
         let replyMessage;
 
         if (isPass) {
+            // Remember this accepted doc for the next upload in this session
+            if (currentKey) {
+                updateSession(phone, {
+                    acceptedDocs: {
+                        ...(session.acceptedDocs || {}),
+                        [serviceKey]: [...acceptedKeys]
+                    }
+                });
+            }
+
             replyMessage =
                 `✅ *DOCUMENT ACCEPTED*\n\n` +
                 `📄 Received: *${verdict.detected_document || "Document"}*\n` +
@@ -962,18 +1012,12 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
                     ? `✔️ Matches requirement: *${verdict.matched_requirement}*\n`
                     : "") +
                 `\n📌 Applying for: *${serviceRequested}*\n\n` +
-                (requiredList.length > 1
+                (remaining.length > 0
                     ? `📋 *Remaining documents to upload:*\n` +
-                      requiredList
-                          .filter(r =>
-                              !String(verdict.matched_requirement || "")
-                                  .toLowerCase()
-                                  .includes(r.toLowerCase())
-                          )
-                          .map(r => `• ${r}`)
-                          .join("\n") +
+                      remaining.map(r => `• ${r}`).join("\n") +
                       `\n\nUpload the next document, or visit the center if you are done. 🙏`
-                    : `You may now visit the Akshaya Center to complete your application. 🙏`);
+                    : `🎉 *All required documents received!*\n\n` +
+                      `You may now visit the Akshaya Center to complete your application. 🙏`);
 
         } else {
             const problemList = problems.length > 0

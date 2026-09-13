@@ -1010,6 +1010,8 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             r => !acceptedKeys.has(canonicalDocKey(r))
         );
 
+        console.log(`📋 Required: [${requiredList.join(" | ")}] | Accepted: [${[...acceptedKeys].join(" | ")}] | Remaining: [${remaining.join(" | ")}]`);
+
         let replyMessage;
 
         if (isPass) {

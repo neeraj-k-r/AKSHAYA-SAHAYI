@@ -1187,6 +1187,8 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
                         console.warn("⚠️ Dashboard save skipped:", dashErr.message);
                     }
                 }
+            } else {
+                console.warn("⚠️ Dashboard save skipped: Postgres not connected");
             }
         }
 

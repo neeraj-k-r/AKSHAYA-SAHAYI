@@ -1,189 +1,207 @@
 import { useState, useEffect, useMemo } from 'react';
-import './App.css';
 import { API_BASE, authHeaders } from './api';
 import AddRuleForm from './AddRuleForm';
+import './App.css';
 
-// Backend stores new entries as "label|url"; legacy rows are plain URLs.
-function parseDoc(entry, index) {
-    const text = String(entry || '');
-    const sep = text.indexOf('|');
-    if (sep > 0 && /^https?:\/\//i.test(text.slice(sep + 1).trim())) {
-        return { label: text.slice(0, sep).trim() || `Doc ${index + 1}`, url: text.slice(sep + 1).trim() };
+function timeAgo(iso) {
+    if (!iso) return '';
+    const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    return `${Math.floor(s / 86400)}d ago`;
+}
+
+function digits(phone) {
+    return String(phone || '').replace(/\D/g, '');
+}
+
+function displayNameRaw(r) {
+    return (r.citizen_name || '').trim() || null;
+}
+
+function parseDoc(entry) {
+    if (typeof entry === 'string' && entry.includes('|')) {
+        const i = entry.indexOf('|');
+        return { label: entry.slice(0, i) || 'Document', url: entry.slice(i + 1) || null };
     }
-    return { label: `Doc ${index + 1}`, url: text };
+    return { label: 'Document', url: typeof entry === 'string' ? entry : null };
 }
 
-function timeAgo(value) {
-    if (!value) return '';
-    const diff = Date.now() - new Date(value).getTime();
-    if (Number.isNaN(diff) || diff < 0) return '';
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.floor(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days}d ago`;
-    return new Date(value).toLocaleDateString();
-}
-
-function avatarLetter(req) {
-    const base = (req.citizen_name || req.citizen_phone || '?').trim();
-    return (base.charAt(0) || '?').toUpperCase();
+function rowDocs(r) {
+    const urls = Array.isArray(r.document_urls) ? r.document_urls : [];
+    if (urls.length === 0) return [{ label: 'Document', url: null }];
+    return urls.map(parseDoc);
 }
 
 export default function App() {
-    const [token, setToken] = useState(localStorage.getItem('token') || '');
-    const [role, setRole] = useState(localStorage.getItem('role') || '');
-    const [centerCode, setCenterCode] = useState(localStorage.getItem('center_code') || '');
-
-    const [email, setEmail] = useState('');
+    const [token, setToken] = useState(() => localStorage.getItem('token') || '');
+    const [role, setRole] = useState(() => localStorage.getItem('role') || '');
+    const [centerCode, setCenterCode] = useState(() => localStorage.getItem('center_code') || '');
+    const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [loginError, setLoginError] = useState('');
-
     const [requests, setRequests] = useState([]);
-    const [fetchError, setFetchError] = useState('');
     const [loading, setLoading] = useState(false);
-
-    const [search, setSearch] = useState('');
-    const [serviceFilter, setServiceFilter] = useState('All');
+    const [fetchError, setFetchError] = useState('');
+    const [query, setQuery] = useState('');
+    const [service, setService] = useState('All');
     const [showCreate, setShowCreate] = useState(false);
     const [showRules, setShowRules] = useState(false);
+    const [newCenter, setNewCenter] = useState({ center_code: '', center_name: '', district: '', email: '', password: '' });
+    const [createMsg, setCreateMsg] = useState('');
 
-    const [newCode, setNewCode] = useState('');
-    const [newName, setNewName] = useState('');
-    const [newDistrict, setNewDistrict] = useState('');
-    const [newEmail, setNewEmail] = useState('');
-    const [newPass, setNewPass] = useState('');
-
-    const handleLogin = async (e) => {
+    async function login(e) {
         e.preventDefault();
         setLoginError('');
         try {
-            const res = await fetch(`${API_BASE}/api/auth/login`, {
+            const res = await fetch(`${API_BASE}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, password })
+                body: JSON.stringify({ username, password })
             });
             const data = await res.json();
-            if (data.token) {
-                localStorage.setItem('token', data.token);
-                localStorage.setItem('role', data.role);
-                localStorage.setItem('center_code', data.center_code || '');
-                setToken(data.token);
-                setRole(data.role);
-                setCenterCode(data.center_code || '');
-            } else {
-                setLoginError(data.message || 'Invalid login credentials');
+            if (!res.ok || !data.token) {
+                setLoginError(data.error || 'Login failed');
+                return;
             }
+            localStorage.setItem('token', data.token);
+            localStorage.setItem('role', data.role);
+            localStorage.setItem('center_code', data.center_code);
+            setToken(data.token);
+            setRole(data.role);
+            setCenterCode(data.center_code);
         } catch {
-            setLoginError('Could not reach the server. Check your connection.');
+            setLoginError('Cannot reach server. Check connection.');
         }
-    };
+    }
 
-    const handleLogout = () => {
-        localStorage.clear();
+    function logout() {
+        localStorage.removeItem('token');
+        localStorage.removeItem('role');
+        localStorage.removeItem('center_code');
         setToken('');
         setRole('');
         setCenterCode('');
         setRequests([]);
-    };
+    }
 
-    const loadRequests = async () => {
-        if (!token) return;
+    async function loadRequests() {
         setLoading(true);
+        setFetchError('');
         try {
-            const res = await fetch(`${API_BASE}/api/dashboard/requests`, {
-                headers: authHeaders(token)
-            });
-            if (!res.ok) {
-                const errorText = await res.text();
-                throw new Error(`Error ${res.status}: ${errorText}`);
-            }
+            const res = await fetch(`${API_BASE}/api/dashboard/requests`, { headers: authHeaders() });
             const data = await res.json();
-            if (Array.isArray(data)) {
-                setRequests(data);
-                setFetchError('');
-            } else {
-                setRequests([]);
-                setFetchError(data.error || data.message || 'Failed to load requests.');
+            if (!res.ok) {
+                if (res.status === 401 || res.status === 403) { logout(); return; }
+                throw new Error(data.error || 'Failed to load');
             }
+            setRequests(Array.isArray(data) ? data : []);
         } catch (err) {
-            setRequests([]);
             setFetchError(err.message);
         } finally {
             setLoading(false);
         }
-    };
+    }
 
     useEffect(() => {
-        // Initial load on login: fetch-once in effect is intentional.
-        // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-        loadRequests();
+        if (token) {
+            // Initial load on login: fetch-once in effect is intentional.
+            // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+            loadRequests();
+        }
     }, [token]);
 
-    const handleCreateCenter = async (e) => {
+    async function createCenter(e) {
         e.preventDefault();
-        const res = await fetch(`${API_BASE}/api/admin/create-center`, {
-            method: 'POST',
-            headers: authHeaders(token),
-            body: JSON.stringify({
-                center_code: newCode,
-                center_name: newName || `Akshaya ${newCode}`,
-                district: newDistrict || 'Kerala',
-                email: newEmail,
-                password: newPass
-            })
-        });
-        const data = await res.json();
-        if (res.ok) {
-            alert(data.message || 'Centre created & synced!');
-            setNewCode(''); setNewName(''); setNewDistrict(''); setNewEmail(''); setNewPass('');
-            setShowCreate(false);
-        } else {
-            alert(data.error || data.message);
+        setCreateMsg('');
+        try {
+            const res = await fetch(`${API_BASE}/api/create-center`, {
+                method: 'POST',
+                headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+                body: JSON.stringify(newCenter)
+            });
+            const data = await res.json();
+            setCreateMsg(res.ok ? `✅ ${data.message}` : `❌ ${data.error || 'Failed'}`);
+            if (res.ok) setNewCenter({ center_code: '', center_name: '', district: '', email: '', password: '' });
+        } catch {
+            setCreateMsg('❌ Network error');
         }
-    };
+    }
 
-    const services = useMemo(() => {
-        const set = new Set();
-        requests.forEach(r => { if (r.category) set.add(r.category); });
-        return ['All', ...[...set].sort()];
+    // One card per application: group rows by service + person + center,
+    // merging every verified upload into a single document list.
+    const groups = useMemo(() => {
+        const map = new Map();
+        const sorted = [...requests].sort(
+            (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0)
+        );
+        for (const r of sorted) {
+            const key = [
+                (r.category || 'Other').trim().toLowerCase(),
+                digits(r.citizen_phone),
+                (r.assigned_center_code || '').trim().toUpperCase()
+            ].join('|');
+            let g = map.get(key);
+            if (!g) {
+                g = {
+                    key,
+                    category: (r.category || '').trim() || 'Other service',
+                    phone: digits(r.citizen_phone),
+                    name: displayNameRaw(r),
+                    centerCode: r.assigned_center_code || '—',
+                    token: r.token_number || '—',
+                    createdAt: r.created_at,
+                    docs: []
+                };
+                map.set(key, g);
+            }
+            const nm = displayNameRaw(r);
+            if (nm && !g.name) g.name = nm;
+            if (r.token_number) g.token = r.token_number;
+            if (r.created_at) g.createdAt = r.created_at;
+            g.docs.push(...rowDocs(r));
+        }
+        return [...map.values()].sort(
+            (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+        );
     }, [requests]);
 
-    const stats = useMemo(() => {
-        const citizens = new Set(requests.map(r => r.citizen_phone).filter(Boolean));
-        const docs = requests.reduce((n, r) => n + (Array.isArray(r.document_urls) ? r.document_urls.length : 0), 0);
-        return {
-            total: requests.length,
-            services: services.length - 1,
-            citizens: citizens.size,
-            docs
-        };
-    }, [requests, services]);
+    const services = useMemo(
+        () => ['All', ...new Set(groups.map(g => g.category))],
+        [groups]
+    );
 
-    const visible = useMemo(() => {
-        const q = search.trim().toLowerCase();
-        return requests.filter(r => {
-            if (serviceFilter !== 'All' && r.category !== serviceFilter) return false;
+    const filtered = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return groups.filter(g => {
+            if (service !== 'All' && g.category !== service) return false;
             if (!q) return true;
-            return [r.citizen_name, r.citizen_phone, r.token_number, r.category, r.assigned_center_code]
-                .some(v => String(v || '').toLowerCase().includes(q));
+            return (
+                g.phone.includes(q.replace(/\D/g, '')) ||
+                (g.name || '').toLowerCase().includes(q) ||
+                (g.token || '').toLowerCase().includes(q) ||
+                g.category.toLowerCase().includes(q) ||
+                g.docs.some(d => d.label.toLowerCase().includes(q))
+            );
         });
-    }, [requests, search, serviceFilter]);
+    }, [groups, query, service]);
 
-    const grouped = useMemo(() => {
-        const acc = {};
-        visible.forEach(req => {
-            const key = req.category || 'Other';
-            acc[key] = acc[key] || [];
-            acc[key].push(req);
-        });
-        Object.values(acc).forEach(list =>
-            list.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
-        );
-        return Object.entries(acc).sort((a, b) => a[0].localeCompare(b[0]));
-    }, [visible]);
+    const stats = useMemo(() => ({
+        submissions: groups.length,
+        services: new Set(groups.map(g => g.category)).size,
+        citizens: new Set(groups.map(g => g.phone)).size,
+        documents: groups.reduce((n, g) => n + g.docs.length, 0)
+    }), [groups]);
+
+    const groupedByService = useMemo(() => {
+        const map = new Map();
+        for (const g of filtered) {
+            if (!map.has(g.category)) map.set(g.category, []);
+            map.get(g.category).push(g);
+        }
+        return [...map.entries()];
+    }, [filtered]);
 
     if (!token) {
         return (
@@ -191,12 +209,12 @@ export default function App() {
                 <div className="login-card">
                     <div className="login-logo">🏛️</div>
                     <h1>Akshaya Sahayi</h1>
-                    <p className="muted">Centre dashboard sign in</p>
-                    <form onSubmit={handleLogin}>
-                        <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required />
-                        <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required />
+                    <p className="muted">Center dashboard sign in</p>
+                    <form onSubmit={login}>
+                        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" autoComplete="username" />
+                        <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
                         {loginError && <div className="login-error">{loginError}</div>}
-                        <button type="submit" className="btn-primary">Login</button>
+                        <button className="btn-primary" type="submit">Sign In</button>
                     </form>
                 </div>
             </div>
@@ -208,40 +226,38 @@ export default function App() {
             <header className="dash-header">
                 <div>
                     <h1>🏛️ Akshaya Sahayi</h1>
-                    <p className="muted">
-                        {role === 'superadmin' ? 'Administrator' : `Centre ${centerCode || ''}`}
-                    </p>
+                    <p className="muted">Centre {centerCode}{role === 'superadmin' ? ' · Superadmin' : ''}</p>
                 </div>
                 <div className="header-actions">
                     <button className="btn-ghost" onClick={loadRequests} disabled={loading}>
-                        {loading ? 'Refreshing…' : '↻ Refresh'}
+                        {loading ? 'Loading…' : '⟳ Refresh'}
                     </button>
-                    <button className="btn-ghost" onClick={handleLogout}>Logout</button>
+                    <button className="btn-ghost" onClick={logout}>Logout</button>
                 </div>
             </header>
 
             {fetchError && <div className="alert-error">⚠️ {fetchError}</div>}
 
             <section className="stats">
-                <div className="stat"><span className="stat-num">{stats.total}</span><span className="stat-label">Submissions</span></div>
+                <div className="stat"><span className="stat-num">{stats.submissions}</span><span className="stat-label">Applications</span></div>
                 <div className="stat"><span className="stat-num">{stats.services}</span><span className="stat-label">Services</span></div>
                 <div className="stat"><span className="stat-num">{stats.citizens}</span><span className="stat-label">Citizens</span></div>
-                <div className="stat"><span className="stat-num">{stats.docs}</span><span className="stat-label">Documents</span></div>
+                <div className="stat"><span className="stat-num">{stats.documents}</span><span className="stat-label">Documents</span></div>
             </section>
 
             <section className="toolbar">
                 <input
                     className="search"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
                     placeholder="🔍 Search name, phone, token, service…"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
                 />
                 <div className="chips">
                     {services.map(s => (
                         <button
                             key={s}
-                            className={serviceFilter === s ? 'chip active' : 'chip'}
-                            onClick={() => setServiceFilter(s)}
+                            className={service === s ? 'chip active' : 'chip'}
+                            onClick={() => setService(s)}
                         >
                             {s}
                         </button>
@@ -252,16 +268,17 @@ export default function App() {
             {role === 'superadmin' && (
                 <section className="panel">
                     <button className="panel-toggle" onClick={() => setShowCreate(v => !v)}>
-                        {showCreate ? '▾' : '▸'} Create regional centre account
+                        {showCreate ? '▾' : '▸'} Create Akshaya Center
                     </button>
                     {showCreate && (
-                        <form onSubmit={handleCreateCenter} className="create-form">
-                            <input placeholder="Code (e.g. KNR-105)" value={newCode} onChange={e => setNewCode(e.target.value)} required />
-                            <input placeholder="Centre name" value={newName} onChange={e => setNewName(e.target.value)} />
-                            <input placeholder="District" value={newDistrict} onChange={e => setNewDistrict(e.target.value)} />
-                            <input type="email" placeholder="Email" value={newEmail} onChange={e => setNewEmail(e.target.value)} required />
-                            <input type="password" placeholder="Password" value={newPass} onChange={e => setNewPass(e.target.value)} required />
-                            <button type="submit" className="btn-primary">Create &amp; Sync</button>
+                        <form className="create-form" onSubmit={createCenter}>
+                            <input placeholder="Center code" value={newCenter.center_code} onChange={e => setNewCenter({ ...newCenter, center_code: e.target.value })} required />
+                            <input placeholder="Center name" value={newCenter.center_name} onChange={e => setNewCenter({ ...newCenter, center_name: e.target.value })} required />
+                            <input placeholder="District" value={newCenter.district} onChange={e => setNewCenter({ ...newCenter, district: e.target.value })} required />
+                            <input placeholder="Email" value={newCenter.email} onChange={e => setNewCenter({ ...newCenter, email: e.target.value })} required />
+                            <input placeholder="Password" type="password" value={newCenter.password} onChange={e => setNewCenter({ ...newCenter, password: e.target.value })} required />
+                            <button className="btn-primary" type="submit">Create</button>
+                            {createMsg && <span className="muted">{createMsg}</span>}
                         </form>
                     )}
                 </section>
@@ -269,54 +286,46 @@ export default function App() {
 
             <section className="panel">
                 <button className="panel-toggle" onClick={() => setShowRules(v => !v)}>
-                    {showRules ? '▾' : '▸'} Document guidelines for {centerCode || 'your centre'}
+                    {showRules ? '▾' : '▸'} Document guidelines for {centerCode}
                 </button>
                 {showRules && <AddRuleForm />}
             </section>
 
-            {grouped.length === 0 && !loading && (
-                <div className="empty">No submissions yet. Verified WhatsApp documents will appear here.</div>
-            )}
-
-            {grouped.map(([category, list]) => (
-                <section key={category} className="service-group">
-                    <h2>📁 {category} <span className="count">{list.length}</span></h2>
+            {filtered.length === 0 ? (
+                <div className="empty">
+                    {loading ? 'Loading applications…' : 'No applications found. Verified WhatsApp submissions will appear here.'}
+                </div>
+            ) : groupedByService.map(([svc, items]) => (
+                <section key={svc} className="service-group">
+                    <h2>📁 {svc} <span className="count">{items.length}</span></h2>
                     <div className="cards">
-                        {list.map(req => {
-                            const docs = Array.isArray(req.document_urls) ? req.document_urls : [];
+                        {items.map(g => {
+                            const name = g.name || 'name not shared';
                             return (
-                                <article key={req.id || req.token_number} className="req-card">
+                                <article key={g.key} className="req-card">
                                     <div className="req-top">
-                                        <div className="avatar">{avatarLetter(req)}</div>
+                                        <div className="avatar">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
                                         <div className="req-user">
-                                            <strong>{req.citizen_name || req.citizen_phone || 'Unknown'}</strong>
-                                            {req.citizen_name && req.citizen_phone && (
-                                                <a className="phone" href={`https://wa.me/${String(req.citizen_phone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer">
-                                                    📱 {req.citizen_phone}
-                                                </a>
-                                            )}
-                                            {!req.citizen_name && <span className="muted">name not shared</span>}
+                                            <strong>{name}</strong>
+                                            <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer">
+                                                📱 {g.phone}
+                                            </a>
                                         </div>
-                                        <span className="time" title={req.created_at ? new Date(req.created_at).toLocaleString() : ''}>
-                                            {timeAgo(req.created_at)}
-                                        </span>
+                                        <span className="time">{timeAgo(g.createdAt)}</span>
                                     </div>
                                     <div className="req-meta">
-                                        <span className="pill">🎫 {req.token_number}</span>
-                                        <span className="pill">🏢 {req.assigned_center_code}</span>
+                                        <span className="pill">🎫 {g.token}</span>
+                                        <span className="pill">🏢 {g.centerCode}</span>
+                                        {g.docs.length > 1 && <span className="pill">📄 {g.docs.length} docs</span>}
                                     </div>
                                     <div className="docs">
-                                        {docs.length === 0 && <span className="muted">No documents attached</span>}
-                                        {docs.map((d, idx) => {
-                                            const { label, url } = parseDoc(d, idx);
-                                            return url ? (
-                                                <a key={idx} className="doc-chip" href={url} target="_blank" rel="noreferrer">
-                                                    📄 {label}
-                                                </a>
-                                            ) : (
-                                                <span key={idx} className="doc-chip muted">📄 {label}</span>
-                                            );
-                                        })}
+                                        {g.docs.map((d, i) => d.url ? (
+                                            <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer">
+                                                📎 {d.label}
+                                            </a>
+                                        ) : (
+                                            <span key={i} className="doc-chip muted">📎 {d.label}</span>
+                                        ))}
                                     </div>
                                 </article>
                             );

@@ -834,30 +834,48 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         const prompt = `
 You are an Akshaya Center document verification officer in Kerala.
 
-EXPECTED DOCUMENT TYPE: ${serviceRequested}
+The citizen is APPLYING FOR: ${serviceRequested}
 
-ACCEPTANCE RULES:
+They must SUBMIT these supporting documents:
 ${rulesText}
 
-Judge fairly. Normal phone photos of real documents should PASS.
+CRITICAL INSTRUCTION:
+The citizen is applying to OBTAIN a "${serviceRequested}".
+They are NOT expected to upload a "${serviceRequested}".
+You are ONLY checking their supporting documents.
+
+TASK:
+Identify what document is in the image, then check whether it matches
+ANY item in the supporting documents list above.
+
+Match generously. Common name variations are the SAME document:
+- "aadhar", "aadhaar", "adhar", "UID", "Aadhaar Card" -> Aadhaar Card
+- "caste", "caste certificate", "community certificate" -> Caste Certificate
+- "ration", "ration card" -> Ration Card
+- "income", "income certificate" -> Income Certificate
+- "pan", "pan card" -> PAN Card
+- "bank", "passbook", "bank passbook" -> Bank Passbook
+
+Set status = "PASS" if:
+- The uploaded document matches ANY ONE item in the supporting list, AND
+- The image is readable
 
 Set status = "FAIL" only if:
-- Text is genuinely unreadable (severe blur, extreme darkness, heavy glare)
-- The document is clearly NOT a "${serviceRequested}"
-- A required element from the rules is clearly absent
+- The document is NOT in the supporting documents list at all, OR
+- Text is genuinely unreadable (severe blur, extreme darkness, heavy glare), OR
 - Major parts of the document are cut off
 
-Set status = "PASS" if the document is the correct type and the key
-details are readable. Minor wear, slight angle, coloured background,
-or a laminated card are ACCEPTABLE.
+Minor wear, slight angle, coloured background, lamination, and normal
+phone photos are ACCEPTABLE.
 
 Reply with ONLY this JSON. No markdown fences, no extra text:
 {
   "status": "PASS",
-  "detected_document": "",
+  "detected_document": "name of document you see",
+  "matched_requirement": "which item from the supporting list it matches, or empty",
   "is_readable": true,
   "missing_or_problem": [],
-  "reason": ""
+  "reason": "one short sentence"
 }
 `;
 
@@ -929,32 +947,52 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             : [];
 
         // ---------- 7. Build WhatsApp reply ----------
+        const requiredList = rulesText
+            .split(/[,\n;]+/)
+            .map(s => s.trim())
+            .filter(Boolean);
+
         let replyMessage;
 
         if (isPass) {
             replyMessage =
                 `✅ *DOCUMENT ACCEPTED*\n\n` +
-                `📄 Document: *${verdict.detected_document || serviceRequested}*\n` +
-                `✔️ ${verdict.reason || "All required details are clearly visible."}\n\n` +
-                `Your document meets the Akshaya Center requirements. ` +
-                `You may now visit the center to complete your application. 🙏`;
+                `📄 Received: *${verdict.detected_document || "Document"}*\n` +
+                (verdict.matched_requirement
+                    ? `✔️ Matches requirement: *${verdict.matched_requirement}*\n`
+                    : "") +
+                `\n📌 Applying for: *${serviceRequested}*\n\n` +
+                (requiredList.length > 1
+                    ? `📋 *Remaining documents to upload:*\n` +
+                      requiredList
+                          .filter(r =>
+                              !String(verdict.matched_requirement || "")
+                                  .toLowerCase()
+                                  .includes(r.toLowerCase())
+                          )
+                          .map(r => `• ${r}`)
+                          .join("\n") +
+                      `\n\nUpload the next document, or visit the center if you are done. 🙏`
+                    : `You may now visit the Akshaya Center to complete your application. 🙏`);
 
         } else {
             const problemList = problems.length > 0
                 ? problems.map(p => `• ${p}`).join("\n")
-                : `• ${verdict.reason || "Required details are not clearly visible."}`;
+                : `• ${verdict.reason || "Document could not be verified."}`;
 
             replyMessage =
-                `❌ *DOCUMENT REJECTED — PLEASE RETAKE THE PHOTO*\n\n` +
+                `❌ *DOCUMENT NOT ACCEPTED*\n\n` +
                 (verdict.detected_document
                     ? `📄 We detected: *${verdict.detected_document}*\n`
                     : "") +
-                `📌 Expected: *${serviceRequested}*\n\n` +
-                `*Issues found:*\n${problemList}\n\n` +
-                `📷 *How to retake:*\n` +
+                `📌 Applying for: *${serviceRequested}*\n\n` +
+                `📋 *Accepted supporting documents:*\n` +
+                requiredList.map(r => `• ${r}`).join("\n") +
+                `\n\n*Issue:*\n${problemList}\n\n` +
+                `📷 *Tips for a clear photo:*\n` +
                 `1. Place the document flat on a plain surface\n` +
                 `2. Use bright light, avoid shadows and glare\n` +
-                `3. Capture the *full* document — all four corners\n` +
+                `3. Capture all four corners\n` +
                 `4. Hold steady so the text is sharp\n\n` +
                 `Please tap 📎 or 📷 and upload again.`;
         }

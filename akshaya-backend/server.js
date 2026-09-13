@@ -275,6 +275,10 @@ function withTimeout(promise, ms = 3000) {
     });
 }
 
+const KNOWN_DOC_KEYS = new Set(
+    ["aadhaar", "caste", "ration", "income", "pan", "passbook"]
+);
+
 function cleanPhoneNumber(value) {
     return String(value || "")
         .replace(/whatsapp:\+?/gi, "")
@@ -983,16 +987,30 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             : [];
 
         // ---------- 7. Build WhatsApp reply ----------
-        // Multi-line rules split per line (commas inside descriptions are kept);
-        // single-line rules like "aadhar,caste" split on commas.
-        const requiredList = (
-            rulesText.includes("\n")
-                ? rulesText.split(/\n+/)
-                : rulesText.split(/[,;]+/)
-        )
+        // Rule text comes in two shapes:
+        //   "aadhar,caste" (compact, maybe with trailing newline from forms)
+        //   multi-line descriptive rules (commas inside descriptions are kept).
+        // A single comma-line is split ONLY if every fragment is a known
+        // document; otherwise the line is kept whole.
+        const ruleLines = rulesText
+            .split(/\n+/)
             .map(s => s.trim())
             // Drop header lines like "Required supporting documents:"
             .filter(s => s && !/:$/.test(s));
+
+        let requiredList = ruleLines;
+        if (ruleLines.length === 1 && ruleLines[0].includes(",")) {
+            const parts = ruleLines[0]
+                .split(/[,;]+/)
+                .map(s => s.trim())
+                .filter(Boolean);
+            if (
+                parts.length > 1 &&
+                parts.every(p => KNOWN_DOC_KEYS.has(canonicalDocKey(p)))
+            ) {
+                requiredList = parts;
+            }
+        }
 
         // Supporting docs already accepted for THIS service (earlier uploads),
         // so "remaining" shrinks across uploads instead of repeating.

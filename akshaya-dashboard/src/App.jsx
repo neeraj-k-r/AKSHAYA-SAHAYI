@@ -55,14 +55,14 @@ export default function App() {
         e.preventDefault();
         setLoginError('');
         try {
-            const res = await fetch(`${API_BASE}/api/login`, {
+            const res = await fetch(`${API_BASE}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
+                body: JSON.stringify({ email: username, password })
             });
             const data = await res.json();
             if (!res.ok || !data.token) {
-                setLoginError(data.error || 'Login failed');
+                setLoginError(data.message || data.error || 'Login failed');
                 return;
             }
             localStorage.setItem('token', data.token);
@@ -116,7 +116,7 @@ export default function App() {
         e.preventDefault();
         setCreateMsg('');
         try {
-            const res = await fetch(`${API_BASE}/api/create-center`, {
+            const res = await fetch(`${API_BASE}/api/admin/create-center`, {
                 method: 'POST',
                 headers: { ...authHeaders(), 'Content-Type': 'application/json' },
                 body: JSON.stringify(newCenter)
@@ -211,7 +211,7 @@ export default function App() {
                     <h1>Akshaya Sahayi</h1>
                     <p className="muted">Center dashboard sign in</p>
                     <form onSubmit={login}>
-                        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" autoComplete="username" />
+                        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Email" autoComplete="username" />
                         <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
                         {loginError && <div className="login-error">{loginError}</div>}
                         <button className="btn-primary" type="submit">Sign In</button>

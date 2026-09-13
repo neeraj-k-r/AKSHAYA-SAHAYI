@@ -1710,6 +1710,7 @@ app.get('/api/debug/status', async (req, res) => {
             supabase_project: (process.env.SUPABASE_URL || "")
                 .replace("https://", "")
                 .replace(".supabase.co", ""),
+            deployed_commit: process.env.RENDER_GIT_COMMIT || "local/unknown",
             postgres_connected: isDbConnected,
             gemini_key_set: Boolean(process.env.GEMINI_API_KEY),
             kapso_key_set: Boolean(process.env.KAPSO_API_KEY),

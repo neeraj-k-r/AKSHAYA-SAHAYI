@@ -118,6 +118,15 @@ export default function App() {
         }
     }, [token]);
 
+    // Header shadow on scroll
+    useEffect(() => {
+        const header = document.querySelector('.dash-header');
+        if (!header) return;
+        const onScroll = () => header.classList.toggle('scrolled', window.scrollY > 16);
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => window.removeEventListener('scroll', onScroll);
+    }, []);
+
     async function createCenter(e) {
         e.preventDefault();
         setCreateMsg('');
@@ -257,7 +266,7 @@ export default function App() {
 
     return (
         <div className="dash">
-            <header className="dash-header">
+            <header className="dash-header" role="banner">
                 <div>
                     <h1>🏛️ Akshaya Sahayi</h1>
                     <p className="muted">Centre {centerCode}{role === 'superadmin' ? ' · Superadmin' : ''}</p>

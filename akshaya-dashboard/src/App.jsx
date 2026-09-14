@@ -288,8 +288,7 @@ export default function App() {
 
             {fetchError && <div className="alert-error">⚠️ {fetchError}</div>}
 
-            <main className="dash-content" role="main">
-                <section className="stats" aria-label="Dashboard statistics" aria-busy={loading}>
+            <section className="stats" aria-label="Dashboard statistics" aria-busy={loading}>
                 {loading ? (
                     <>
                         <article className="stat skeleton" aria-hidden="true"><div className="stat-icon loading-skeleton" /><div className="stat-content"><div className="loading-skeleton" style={{height: '32px', width: '60%'}} /><div className="loading-skeleton" style={{height: '14px', width: '40%'}} /></div></article>
@@ -453,9 +452,8 @@ export default function App() {
                             );
                         })}
                     </div>
-                </section>
-            ))}
-        </main>
-    </div>
+</section>
+            )}
+        </div>
     );
 }

@@ -303,23 +303,32 @@ export default function App() {
                 </article>
             </section>
 
-            <section className="toolbar">
-                <input
-                    className="search"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    placeholder="🔍 Search name, phone, token, service…"
-                />
-                <div className="chips">
-                    {services.map(s => (
-                        <button
-                            key={s}
-                            className={service === s ? 'chip active' : 'chip'}
-                            onClick={() => setService(s)}
-                        >
-                            {s}
-                        </button>
-                    ))}
+            <section className="toolbar" aria-label="Search and filters">
+                <div className="search-wrapper">
+                    <label htmlFor="search" className="visually-hidden">Search applications</label>
+                    <input
+                        id="search"
+                        className="search"
+                        value={query}
+                        onChange={e => setQuery(e.target.value)}
+                        placeholder="Search name, phone, token, service…"
+                    />
+                </div>
+                <div className="chips" role="group" aria-label="Filter by service">
+                    {services.map(s => {
+                        const count = s === 'All' ? filtered.length : filtered.filter(g => g.category === s).length;
+                        return (
+                            <button
+                                key={s}
+                                className={service === s ? 'chip active' : 'chip'}
+                                onClick={() => setService(s)}
+                                aria-pressed={service === s}
+                            >
+                                {s}
+                                {s !== 'All' && <span className="chip-count">{count}</span>}
+                            </button>
+                        );
+                    })}
                 </div>
             </section>
 

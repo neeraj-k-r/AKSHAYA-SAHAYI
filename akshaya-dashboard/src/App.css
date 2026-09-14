@@ -283,7 +283,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   gap: var(--space-6);
 }
 
-/* ===== HEADER ===== */
+.dash-header {
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);

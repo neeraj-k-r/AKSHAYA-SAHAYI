@@ -272,11 +272,35 @@ export default function App() {
 
             {fetchError && <div className="alert-error">⚠️ {fetchError}</div>}
 
-            <section className="stats">
-                <div className="stat"><span className="stat-num">{stats.submissions}</span><span className="stat-label">Applications</span></div>
-                <div className="stat"><span className="stat-num">{stats.services}</span><span className="stat-label">Services</span></div>
-                <div className="stat"><span className="stat-num">{stats.citizens}</span><span className="stat-label">Citizens</span></div>
-                <div className="stat"><span className="stat-num">{stats.documents}</span><span className="stat-label">Documents</span></div>
+            <section className="stats" aria-label="Dashboard statistics">
+                <article className="stat">
+                    <div className="stat-icon" style={{background: 'var(--brand-100)', color: 'var(--brand-700)'}} aria-hidden="true">📋</div>
+                    <div className="stat-content">
+                        <span className="stat-num">{stats.submissions}</span>
+                        <span className="stat-label">Applications</span>
+                    </div>
+                </article>
+                <article className="stat">
+                    <div className="stat-icon" style={{background: 'var(--accent-100)', color: 'var(--accent-700)'}} aria-hidden="true">🛂</div>
+                    <div className="stat-content">
+                        <span className="stat-num">{stats.services}</span>
+                        <span className="stat-label">Services</span>
+                    </div>
+                </article>
+                <article className="stat">
+                    <div className="stat-icon" style={{background: 'var(--success-100)', color: 'var(--success-700)'}} aria-hidden="true">👥</div>
+                    <div className="stat-content">
+                        <span className="stat-num">{stats.citizens}</span>
+                        <span className="stat-label">Citizens</span>
+                    </div>
+                </article>
+                <article className="stat">
+                    <div className="stat-icon" style={{background: 'var(--warn-100)', color: 'var(--warn-700)'}} aria-hidden="true">📄</div>
+                    <div className="stat-content">
+                        <span className="stat-num">{stats.documents}</span>
+                        <span className="stat-label">Documents</span>
+                    </div>
+                </article>
             </section>
 
             <section className="toolbar">

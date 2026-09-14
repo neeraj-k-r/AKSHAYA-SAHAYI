@@ -537,6 +537,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 
 .panel-toggle:hover { background: var(--surface-hover); }
 
+.panel-title { display: flex; align-items: center; gap: var(--space-2); }
+
 .panel-toggle .icon {
   font-size: 16px;
   color: var(--text-muted);
@@ -558,6 +560,17 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .create-form .form-label { font-size: 12px; }
 .create-form .form-input { padding: var(--space-2) var(--space-3); font-size: 14px; }
 .create-form .btn-primary { width: 100%; margin-top: var(--space-1); }
+
+.create-msg {
+  grid-column: 1 / -1;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  text-align: center;
+}
+.create-msg.success { background: var(--success-50); color: var(--success-700); border: 1px solid var(--success-100); }
+.create-msg.error { background: var(--error-50); color: var(--error-700); border: 1px solid var(--error-100); }
 
 /* ===== SERVICE GROUPS ===== */
 .service-group { animation: slideUp var(--slow) 0.2s both; }

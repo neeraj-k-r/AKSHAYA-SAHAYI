@@ -345,28 +345,47 @@ export default function App() {
 
             {role === 'superadmin' && (
                 <section className="panel">
-                    <button className="panel-toggle" onClick={() => setShowCreate(v => !v)}>
-                        {showCreate ? '▾' : '▸'} Create Akshaya Center
+                    <button className="panel-toggle" onClick={() => setShowCreate(v => !v)} aria-expanded={showCreate}>
+                        <span className="panel-title">➕ Create Akshaya Center</span>
+                        <span className="icon">{showCreate ? '▾' : '▸'}</span>
                     </button>
                     {showCreate && (
-                        <form className="create-form" onSubmit={createCenter}>
-                            <input placeholder="Center code" value={newCenter.center_code} onChange={e => setNewCenter({ ...newCenter, center_code: e.target.value })} required />
-                            <input placeholder="Center name" value={newCenter.center_name} onChange={e => setNewCenter({ ...newCenter, center_name: e.target.value })} required />
-                            <input placeholder="District" value={newCenter.district} onChange={e => setNewCenter({ ...newCenter, district: e.target.value })} required />
-                            <input placeholder="Email" value={newCenter.email} onChange={e => setNewCenter({ ...newCenter, email: e.target.value })} required />
-                            <input placeholder="Password" type="password" value={newCenter.password} onChange={e => setNewCenter({ ...newCenter, password: e.target.value })} required />
-                            <button className="btn-primary" type="submit">Create</button>
-                            {createMsg && <span className="muted">{createMsg}</span>}
-                        </form>
+                        <div className="panel-content">
+                            <form className="create-form" onSubmit={createCenter}>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="ccode">Center code</label>
+                                    <input id="ccode" placeholder="e.g. TST1" value={newCenter.center_code} onChange={e => setNewCenter({ ...newCenter, center_code: e.target.value })} required className="form-input" />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="cname">Center name</label>
+                                    <input id="cname" placeholder="e.g. Test Center" value={newCenter.center_name} onChange={e => setNewCenter({ ...newCenter, center_name: e.target.value })} required className="form-input" />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="cdistrict">District</label>
+                                    <input id="cdistrict" placeholder="e.g. Ernakulam" value={newCenter.district} onChange={e => setNewCenter({ ...newCenter, district: e.target.value })} required className="form-input" />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="cemail">Email</label>
+                                    <input id="cemail" type="email" placeholder="center@akshaya.gov.in" value={newCenter.email} onChange={e => setNewCenter({ ...newCenter, email: e.target.value })} required className="form-input" />
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label" htmlFor="cpassword">Password</label>
+                                    <input id="cpassword" type="password" placeholder="Set a strong password" value={newCenter.password} onChange={e => setNewCenter({ ...newCenter, password: e.target.value })} required className="form-input" />
+                                </div>
+                                <button className="btn-primary" type="submit">Create Center</button>
+                                {createMsg && <p className={`create-msg ${createMsg.includes('✅') ? 'success' : 'error'}`}>{createMsg}</p>}
+                            </form>
+                        </div>
                     )}
                 </section>
             )}
 
             <section className="panel">
-                <button className="panel-toggle" onClick={() => setShowRules(v => !v)}>
-                    {showRules ? '▾' : '▸'} Document guidelines for {centerCode}
+                <button className="panel-toggle" onClick={() => setShowRules(v => !v)} aria-expanded={showRules}>
+                    <span className="panel-title">📋 Document guidelines for {centerCode}</span>
+                    <span className="icon">{showRules ? '▾' : '▸'}</span>
                 </button>
-                {showRules && <AddRuleForm />}
+                {showRules && <div className="panel-content"><AddRuleForm /></div>}
             </section>
 
             {filtered.length === 0 ? (

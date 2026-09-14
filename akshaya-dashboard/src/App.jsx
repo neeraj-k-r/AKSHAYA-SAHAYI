@@ -272,8 +272,15 @@ export default function App() {
                     <p className="muted">Centre {centerCode}{role === 'superadmin' ? ' · Superadmin' : ''}</p>
                 </div>
                 <div className="header-actions">
-                    <button className="btn-ghost" onClick={loadRequests} disabled={loading}>
-                        {loading ? 'Loading…' : '⟳ Refresh'}
+                    <button className="btn-ghost" onClick={loadRequests} disabled={loading} aria-busy={loading}>
+                        {loading ? (
+                            <>
+                                <span className="spinner" aria-hidden="true" />
+                                Loading…
+                            </>
+                        ) : (
+                            '⟳ Refresh'
+                        )}
                     </button>
                     <button className="btn-ghost" onClick={logout}>Logout</button>
                 </div>

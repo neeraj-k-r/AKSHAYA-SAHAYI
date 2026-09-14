@@ -283,7 +283,11 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   gap: var(--space-6);
 }
 
-.dash-header {
+.dash-content {
+  animation: fadeIn var(--normal), slideUp var(--normal);
+}
+
+/* ===== HEADER ===== */
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);

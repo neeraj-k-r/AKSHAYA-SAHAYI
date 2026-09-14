@@ -418,6 +418,10 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 
 .stat:hover::before { opacity: 1; }
 
+.stat.skeleton { pointer-events: none; }
+.stat.skeleton .stat-icon.loading-skeleton { width: 44px; height: 44px; border-radius: var(--radius-md); }
+.stat.skeleton .stat-content .loading-skeleton { border-radius: var(--radius-sm); }
+
 .stat-num {
   font-size: clamp(28px, 4vw, 36px);
   font-weight: 700;

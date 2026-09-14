@@ -362,6 +362,14 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-ghost .icon { font-size: 16px; }
+.btn-ghost .spinner {
+  width: 16px; height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  opacity: 0.7;
+}
 
 /* ===== ALERTS ===== */
 .alert-error {

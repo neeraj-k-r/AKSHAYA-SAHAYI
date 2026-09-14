@@ -360,38 +360,46 @@ export default function App() {
 
             {filtered.length === 0 ? (
                 <div className="empty">
-                    {loading ? 'Loading applications…' : 'No applications found. Verified WhatsApp submissions will appear here.'}
+                    <div className="empty-icon" aria-hidden="true">📭</div>
+                    <h3>{loading ? 'Loading applications…' : 'No applications yet'}</h3>
+                    <p>{loading ? 'Please wait while we fetch the latest data.' : 'Verified WhatsApp submissions will appear here once citizens upload documents.'}</p>
                 </div>
             ) : groupedByService.map(([svc, items]) => (
-                <section key={svc} className="service-group">
-                    <h2>📁 {svc} <span className="count">{items.length}</span></h2>
+                <section key={svc} className="service-group" aria-labelledby={`svc-${svc}`}>
+                    <h2 id={`svc-${svc}`}>📁 {svc} <span className="count">{items.length}</span></h2>
                     <div className="cards">
-                        {items.map(g => {
-                            const name = g.name || 'name not shared';
+                        {items.map((g, idx) => {
+                            const name = g.name || 'Name not shared';
                             return (
-                                <article key={g.key} className="req-card">
+                                <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}}>
                                     <div className="req-top">
-                                        <div className="avatar">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
+                                        <div className="avatar" aria-hidden="true">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
                                         <div className="req-user">
                                             <strong>{name}</strong>
-                                            <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer">
+                                            <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" aria-label={`Chat on WhatsApp with ${name}`}>
                                                 📱 {g.phone}
                                             </a>
                                         </div>
-                                        <span className="time">{timeAgo(g.createdAt)}</span>
+                                        <time className="time" dateTime={g.createdAt}>{timeAgo(g.createdAt)}</time>
                                     </div>
                                     <div className="req-meta">
-                                        <span className="pill">🎫 {g.token}</span>
-                                        <span className="pill">🏢 {g.centerCode}</span>
-                                        {g.docs.length > 1 && <span className="pill">📄 {g.docs.length} docs</span>}
+                                        <span className="pill token" aria-label={`Token: ${g.token}`}>🎫 {g.token}</span>
+                                        <span className="pill center" aria-label={`Center: ${g.centerCode}`}>🏢 {g.centerCode}</span>
+                                        {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}>📄 {g.docs.length} docs</span>}
                                     </div>
                                     <div className="docs">
                                         {g.docs.map((d, i) => d.url ? (
-                                            <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer">
-                                                📎 {d.label}
+                                            <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`}>
+                                                <span className="doc-icon" aria-hidden="true">📄</span>
+                                                <span className="doc-label">{d.label}</span>
+                                                <span className="doc-arrow" aria-hidden="true">→</span>
                                             </a>
                                         ) : (
-                                            <span key={i} className="doc-chip muted">📎 {d.label}</span>
+                                            <span key={i} className="doc-chip muted" aria-label={`${d.label} (not available)`}>
+                                                <span className="doc-icon" aria-hidden="true">📄</span>
+                                                <span className="doc-label">{d.label}</span>
+                                                <span className="doc-badge" aria-hidden="true">—</span>
+                                            </span>
                                         ))}
                                     </div>
                                 </article>

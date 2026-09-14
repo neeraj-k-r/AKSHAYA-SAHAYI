@@ -759,7 +759,18 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   color: var(--text);
 }
 
-.doc-chip::before { content: '📄'; font-size: 14px; }
+.doc-icon { font-size: 14px; flex-shrink: 0; }
+.doc-label { font-weight: 500; }
+.doc-arrow { color: var(--text-subtle); font-size: 12px; transition: transform var(--fast); }
+.doc-chip:hover .doc-arrow { transform: translateX(2px); }
+.doc-badge {
+  background: var(--border);
+  color: var(--text-subtle);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+}
 
 /* ===== EMPTY STATE ===== */
 .empty {

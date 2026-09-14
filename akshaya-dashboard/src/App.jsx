@@ -213,15 +213,43 @@ export default function App() {
         return (
             <div className="login-wrap">
                 <div className="login-card">
-                    <div className="login-logo">🏛️</div>
+                    <div className="login-logo" aria-hidden="true">🏛️</div>
                     <h1>Akshaya Sahayi</h1>
-                    <p className="muted">Center dashboard sign in</p>
-                    <form onSubmit={login}>
-                        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Email" autoComplete="username" />
-                        <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" type="password" autoComplete="current-password" />
-                        {loginError && <div className="login-error">{loginError}</div>}
-                        <button className="btn-primary" type="submit">Sign In</button>
+                    <p className="muted">Kerala Akshaya Center — Document Verification Dashboard</p>
+                    <form onSubmit={login} noValidate>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="email">Email address</label>
+                            <input
+                                id="email"
+                                type="email"
+                                value={username}
+                                onChange={e => setUsername(e.target.value)}
+                                placeholder="center@akshaya.gov.in"
+                                autoComplete="email"
+                                required
+                                autoFocus
+                                className="form-input"
+                            />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="password">Password</label>
+                            <input
+                                id="password"
+                                type="password"
+                                value={password}
+                                onChange={e => setPassword(e.target.value)}
+                                placeholder="Enter your password"
+                                autoComplete="current-password"
+                                required
+                                className="form-input"
+                            />
+                        </div>
+                        {loginError && <div className="login-error" role="alert">{loginError}</div>}
+                        <button className="btn-primary" type="submit" disabled={!username || !password}>
+                            <span>Sign In</span>
+                        </button>
                     </form>
+                    <p className="login-hint">Demo: admin@akshaya.com / any password</p>
                 </div>
             </div>
         );

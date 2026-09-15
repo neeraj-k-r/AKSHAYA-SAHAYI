@@ -219,6 +219,62 @@ export default function App() {
         return [...map.entries()];
     }, [filtered]);
 
+    const listContent = useMemo(() => {
+        if (filtered.length === 0) {
+            return (
+                <div className="empty">
+                    <div className="empty-icon" aria-hidden="true">📭</div>
+                    <h3>{loading ? 'Loading applications…' : 'No applications yet'}</h3>
+                    <p>{loading ? 'Please wait while we fetch the latest data.' : 'Verified WhatsApp submissions will appear here once citizens upload documents.'}</p>
+                </div>
+            );
+        }
+        return groupedByService.map(([svc, items]) => (
+            <section key={svc} className="service-group" aria-labelledby={`svc-${svc}`}>
+                <h2 id={`svc-${svc}`}>📁 {svc} <span className="count">{items.length}</span></h2>
+                <div className="cards">
+                    {items.map((g, idx) => {
+                        const name = g.name || 'Name not shared';
+                        return (
+                            <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}} onClick={() => g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })}>
+                                <div className="req-top">
+                                    <div className="avatar" aria-hidden="true">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
+                                    <div className="req-user">
+                                        <strong>{name}</strong>
+                                        <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" aria-label={`Chat on WhatsApp with ${name}`}>
+                                            📱 {g.phone}
+                                        </a>
+                                    </div>
+                                    <time className="time" dateTime={g.createdAt}>{timeAgo(g.createdAt)}</time>
+                                </div>
+                                <div className="req-meta">
+                                    <span className="pill token" aria-label={`Token: ${g.token}`}>🎫 {g.token}</span>
+                                    <span className="pill center" aria-label={`Center: ${g.centerCode}`}>🏢 {g.centerCode}</span>
+                                    {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}>📄 {g.docs.length} docs</span>}
+                                </div>
+                                <div className="docs">
+                                    {g.docs.map((d, i) => d.url ? (
+                                        <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`}>
+                                            <span className="doc-icon" aria-hidden="true">📄</span>
+                                            <span className="doc-label">{d.label}</span>
+                                            <span className="doc-arrow" aria-hidden="true">→</span>
+                                        </a>
+                                    ) : (
+                                        <span key={i} className="doc-chip muted" aria-label={`${d.label} (not available)`}>
+                                            <span className="doc-icon" aria-hidden="true">📄</span>
+                                            <span className="doc-label">{d.label}</span>
+                                            <span className="doc-badge" aria-hidden="true">—</span>
+                                        </span>
+                                    ))}
+                                </div>
+                            </article>
+                        );
+                    })}
+                </div>
+            </section>
+        ));
+    }, [filtered, groupedByService, loading]);
+
     if (!token) {
         return (
             <div className="login-wrap">
@@ -405,58 +461,9 @@ export default function App() {
                 {showRules && <div className="panel-content"><AddRuleForm /></div>}
             </section>
 
-            {filtered.length === 0 ? (
-                <div className="empty">
-                    <div className="empty-icon" aria-hidden="true">📭</div>
-                    <h3>{loading ? 'Loading applications…' : 'No applications yet'}</h3>
-                    <p>{loading ? 'Please wait while we fetch the latest data.' : 'Verified WhatsApp submissions will appear here once citizens upload documents.'}</p>
-                </div>
-            ) : groupedByService.map(([svc, items]) => (
-                <section key={svc} className="service-group" aria-labelledby={`svc-${svc}`}>
-                    <h2 id={`svc-${svc}`}>📁 {svc} <span className="count">{items.length}</span></h2>
-                    <div className="cards">
-                        {items.map((g, idx) => {
-                            const name = g.name || 'Name not shared';
-                            return (
-                                <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}} onClick={() => g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })}>
-                                    <div className="req-top">
-                                        <div className="avatar" aria-hidden="true">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
-                                        <div className="req-user">
-                                            <strong>{name}</strong>
-                                            <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" aria-label={`Chat on WhatsApp with ${name}`}>
-                                                📱 {g.phone}
-                                            </a>
-                                        </div>
-                                        <time className="time" dateTime={g.createdAt}>{timeAgo(g.createdAt)}</time>
-                                    </div>
-                                    <div className="req-meta">
-                                        <span className="pill token" aria-label={`Token: ${g.token}`}>🎫 {g.token}</span>
-                                        <span className="pill center" aria-label={`Center: ${g.centerCode}`}>🏢 {g.centerCode}</span>
-                                        {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}>📄 {g.docs.length} docs</span>}
-                                    </div>
-                                    <div className="docs">
-                                        {g.docs.map((d, i) => d.url ? (
-                                            <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`}>
-                                                <span className="doc-icon" aria-hidden="true">📄</span>
-                                                <span className="doc-label">{d.label}</span>
-                                                <span className="doc-arrow" aria-hidden="true">→</span>
-                                            </a>
-                                        ) : (
-                                            <span key={i} className="doc-chip muted" aria-label={`${d.label} (not available)`}>
-                                                <span className="doc-icon" aria-hidden="true">📄</span>
-                                                <span className="doc-label">{d.label}</span>
-                                                <span className="doc-badge" aria-hidden="true">—</span>
-                                            </span>
-                                        ))}
-                                    </div>
-                                </article>
-                            );
-                        })}
-                    </div>
-                </section>
-            ))}
-        </div>
-        {viewDocs && (
+{listContent}
+
+            {viewDocs && (
             <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Document viewer">
                 <div className="doc-modal-backdrop" onClick={() => setViewDocs(null)} />
                 <div className="doc-modal-content">
@@ -494,5 +501,6 @@ export default function App() {
                 </div>
             </div>
         )}
+        </div>
     );
 }

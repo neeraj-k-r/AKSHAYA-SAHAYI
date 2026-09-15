@@ -50,6 +50,7 @@ export default function App() {
     const [showRules, setShowRules] = useState(false);
     const [newCenter, setNewCenter] = useState({ center_code: '', center_name: '', district: '', email: '', password: '' });
     const [createMsg, setCreateMsg] = useState('');
+    const [viewDocs, setViewDocs] = useState(null); // { app: group, index: number }
 
     async function login(e) {
         e.preventDefault();
@@ -417,7 +418,7 @@ export default function App() {
                         {items.map((g, idx) => {
                             const name = g.name || 'Name not shared';
                             return (
-                                <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}}>
+                                <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}} onClick={() => g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })}>
                                     <div className="req-top">
                                         <div className="avatar" aria-hidden="true">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
                                         <div className="req-user">
@@ -455,5 +456,43 @@ export default function App() {
                 </section>
             ))}
         </div>
+        {viewDocs && (
+            <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Document viewer">
+                <div className="doc-modal-backdrop" onClick={() => setViewDocs(null)} />
+                <div className="doc-modal-content">
+                    <button className="doc-modal-close" onClick={() => setViewDocs(null)} aria-label="Close">✕</button>
+                    <div className="doc-modal-header">
+                        <div>
+                            <strong>{viewDocs.app.name || 'Name not shared'}</strong>
+                            <span className="muted"> · {viewDocs.app.phone}</span>
+                        </div>
+                        <span className="pill token">🎫 {viewDocs.app.token}</span>
+                    </div>
+                    <div className="doc-modal-carousel">
+                        <button className="carousel-btn prev" onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: (v.index - 1 + v.app.docs.filter(d => d.url).length) % v.app.docs.filter(d => d.url).length})) }} aria-label="Previous" disabled={viewDocs.index === 0}>‹</button>
+                        <div className="carousel-viewport">
+                            {viewDocs.app.docs.filter(d => d.url).map((d, i) => (
+                                <div key={i} className={`carousel-slide ${i === viewDocs.index ? 'active' : ''}`}>
+                                    <img src={d.url} alt={d.label} onError={e => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+                                    <div className="image-error" style={{display: 'none', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)'}}>
+                                        Failed to load {d.label}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <button className="carousel-btn next" onClick={e => { e.stopPropagation(); const visible = viewDocs.app.docs.filter(d => d.url).length; setViewDocs(v => v && ({...v, index: (v.index + 1) % visible})) }} aria-label="Next" disabled={viewDocs.index === viewDocs.app.docs.filter(d => d.url).length - 1}>›</button>
+                    </div>
+                    <div className="doc-modal-dots">
+                        {viewDocs.app.docs.filter(d => d.url).map((_, i) => (
+                            <button key={i} className={`dot ${i === viewDocs.index ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: i})) }} aria-label={`View document ${i + 1}`} />
+                        ))}
+                    </div>
+                    <div className="doc-modal-info">
+                        <span>{viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.label || 'Document'}</span>
+                        <span>{viewDocs.index + 1} / {viewDocs.app.docs.filter(d => d.url).length}</span>
+                    </div>
+                </div>
+            </div>
+        )}
     );
 }

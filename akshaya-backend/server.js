@@ -138,13 +138,14 @@ function updateSession(phone, values) {
   gemini-flash-latest is FIRST because it auto-routes to a
   healthy version and is less likely to return 503.
 
-  gemini-flash-lite-latest is a harmless extra safety net —
-  if it 404s the loop simply moves on.
+  gemini-flash-lite-latest is FIRST because it is the fastest model
+  and most likely to answer inside Kapso's webhook time budget.
+  If it 404s the loop simply moves on to the heavier models.
 */
 const MODEL_CHAIN = [
-    "gemini-2.5-flash",
+    "gemini-flash-lite-latest",
     "gemini-flash-latest",
-    "gemini-flash-lite-latest"
+    "gemini-2.5-flash"
 ];
 
 /*
@@ -182,7 +183,9 @@ function withTimeout(promise, ms, label) {
 
 function isRetryableError(error) {
     const status = error?.status;
-    const message = String(error?.message || "");
+    // Lowercased once so checks match "TIMEOUT_EXCEEDED",
+    // "Timed out", "timed out", etc. alike.
+    const message = String(error?.message || "").toLowerCase();
 
     return (
         status === 503 ||
@@ -191,10 +194,12 @@ function isRetryableError(error) {
         message.includes("503") ||
         message.includes("429") ||
         message.includes("500") ||
+        message.includes("timeout") ||
         message.includes("timed out") ||
+        message.includes("exceeded") ||
         message.includes("high demand") ||
         message.includes("overloaded") ||
-        message.includes("Service Unavailable") ||
+        message.includes("service unavailable") ||
         message.includes("rate limit")
     );
 }
@@ -209,6 +214,9 @@ function isRetryableError(error) {
 async function callGeminiWithRetry(contentParts, options = {}) {
     const temperature = options.temperature ?? 0.2;
     const maxRetriesPerModel = options.maxRetriesPerModel ?? 2;
+    // Cap output length: the verification verdict is a tiny JSON object,
+    // and fewer tokens = faster response inside Kapso's webhook budget.
+    const maxOutputTokens = options.maxOutputTokens ?? 600;
 
     let lastError = null;
 
@@ -219,7 +227,7 @@ async function callGeminiWithRetry(contentParts, options = {}) {
 
                 const model = genAI.getGenerativeModel({
                     model: modelName,
-                    generationConfig: { temperature }
+                    generationConfig: { temperature, maxOutputTokens }
                 });
 
                 const result = await model.generateContent(contentParts);
@@ -283,18 +291,10 @@ async function generateEmbedding(text) {
 // ==========================================
 // 8. GENERAL HELPERS
 // ==========================================
-function withTimeout(promise, ms = 3000) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            reject(new Error('TIMEOUT_EXCEEDED'));
-        }, ms);
-
-        promise.then(
-            (result) => { clearTimeout(timer); resolve(result); },
-            (error) => { clearTimeout(timer); reject(error); }
-        );
-    });
-}
+// NOTE: the AI time-budget helper withTimeout(promise, ms, label) is
+// defined once in section 7 above. Do NOT add another withTimeout here —
+// a duplicate declaration would shadow it and change the timeout error
+// message that isRetryableError() classifies on.
 
 const KNOWN_DOC_KEYS = new Set(
     ["aadhaar", "caste", "ration", "income", "pan", "passbook"]
@@ -349,6 +349,32 @@ function canonicalDocKey(value) {
     if (/(^|[^a-z])pan([^a-z]|$)/.test(v)) return "pan";
     if (/bank|passbook/.test(v)) return "passbook";
     return v.trim();
+}
+
+/*
+  Next sequential queue token for a category at a centre.
+
+  Each (category, centre) pair has its own queue that starts at 001,
+  so a citizen's token shows exactly how many earlier requests are
+  ahead of them at THAT centre. Example: "INC-003" for the third
+  Income Certificate request at a centre.
+*/
+async function nextQueueToken(category, centerCode) {
+    const prefix = String(category || "").substring(0, 3).toUpperCase() || "DOC";
+    let existing = 0;
+
+    try {
+        const result = await db.query(
+            `SELECT COUNT(*)::int AS n FROM service_requests
+             WHERE category ILIKE $1 AND assigned_center_code ILIKE $2`,
+            [String(category || ""), String(centerCode || "")]
+        );
+        existing = result.rows[0]?.n || 0;
+    } catch (err) {
+        console.warn("⚠️ Token count query failed:", err.message);
+    }
+
+    return `${prefix}-${String(existing + 1).padStart(3, "0")}`;
 }
 
 function getPhoneFromBody(body) {
@@ -1199,8 +1225,7 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             // document_urls entries are "label|url" (dashboard parses both
             // this and legacy plain-URL entries).
             if (isDbConnected) {
-                const dashToken =
-                    `WA-${cleanPhoneNumber(phone).slice(-10)}-${Date.now().toString().slice(-6)}`;
+                const dashToken = await nextQueueToken(serviceRequested, centerId || 'GLOBAL');
                 const docLabel = verdict.detected_document || verdict.matched_requirement || serviceRequested;
 
                 try {
@@ -1326,7 +1351,7 @@ app.post('/api/webhook/document-upload-legacy', async (req, res) => {
 
             if (isDbConnected) {
                 try {
-                    const tokenNumber = `DOC-${Date.now().toString().slice(-6)}`;
+                    const tokenNumber = await nextQueueToken('Document', 'HQ-001');
 
                     await db.query(
                         `INSERT INTO service_requests
@@ -1486,7 +1511,7 @@ app.post('/api/admin/create-center', authenticateToken, async (req, res) => {
 app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
     try {
         const result = await db.query(
-            'SELECT * FROM service_requests ORDER BY created_at DESC'
+            'SELECT * FROM service_requests ORDER BY created_at ASC'
         );
 
         return res.json(result.rows);

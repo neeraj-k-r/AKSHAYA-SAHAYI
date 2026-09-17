@@ -422,6 +422,7 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   gap: var(--space-6);
 }
 
+/* ===== HEADER ===== */
 .dash-header {
   position: sticky;
   top: 0;
@@ -431,11 +432,9 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-4) 0;
+  padding: var(--space-5) var(--space-6);
   margin: calc(var(--space-6) * -1) calc(var(--space-6) * -1) var(--space-6);
-  padding-left: var(--space-6);
-  padding-right: var(--space-6);
-  background: var(--bg);
+  background: linear-gradient(135deg, var(--surface) 0%, var(--bg) 100%);
   border-bottom: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
   animation: slideDown var(--normal);
@@ -443,8 +442,8 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 }
 
 .dash-header.scrolled {
-  box-shadow: var(--shadow-md);
-  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  background: linear-gradient(135deg, var(--bg-elevated) 0%, var(--bg) 100%);
 }
 
 @media (max-width: 640px) {
@@ -456,9 +455,25 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   }
 }
 
+.dash-header-brand { display: flex; align-items: center; gap: var(--space-4); flex: 1; }
+
+.dash-header-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--brand-500), var(--accent-500));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  color: var(--text-on-brand);
+  box-shadow: var(--shadow-md);
+  flex-shrink: 0;
+}
+
 .dash-header h1 {
-  font-size: clamp(24px, 3vw, 30px);
-  font-weight: 700;
+  font-size: clamp(26px, 3.5vw, 32px);
+  font-weight: 800;
   color: var(--text);
   margin: 0;
   letter-spacing: -0.02em;
@@ -466,15 +481,21 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+  line-height: 1.2;
 }
 
-.dash-header p {
-  margin: var(--space-1) 0 0;
+.dash-header-subtitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
   color: var(--text-muted);
-  font-size: 14px;
 }
 
-.header-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.dash-header-subtitle .separator { color: var(--border-strong); }
+
+.dash-header .header-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 
 /* ===== BUTTONS ===== */
 .btn-ghost {

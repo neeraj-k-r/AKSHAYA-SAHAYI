@@ -361,9 +361,16 @@ export default function App() {
     return (
         <div className="dash">
             <header className="dash-header" role="banner">
-                <div>
-                    <h1>🏛️ Akshaya Sahayi</h1>
-                    <p className="muted">Centre {centerCode}{role === 'superadmin' ? ' · Superadmin' : ''}</p>
+                <div className="dash-header-brand">
+                    <div className="dash-header-logo" aria-hidden="true">🏛️</div>
+                    <div>
+                        <h1>Akshaya Sahayi</h1>
+                        <div className="dash-header-subtitle">
+                            <span>Centre <strong>{centerCode}</strong></span>
+                            <span className="separator" aria-hidden="true">·</span>
+                            <span>{role === 'superadmin' ? 'Superadmin' : 'Center User'}</span>
+                        </div>
+                    </div>
                 </div>
                 <div className="header-actions">
                     {role !== 'superadmin' && (

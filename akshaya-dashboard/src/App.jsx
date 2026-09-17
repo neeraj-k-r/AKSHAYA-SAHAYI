@@ -1,6 +1,32 @@
 import { useState, useEffect, useMemo } from 'react';
 import { API_BASE } from './api';
 import AddRuleForm from './AddRuleForm';
+import {
+    IconLandmark,
+    IconClipboard,
+    IconCard,
+    IconUsers,
+    IconFileText,
+    IconRefresh,
+    IconLogout,
+    IconLock,
+    IconAlert,
+    IconFolder,
+    IconPhone,
+    IconClock,
+    IconTicket,
+    IconBuilding,
+    IconInbox,
+    IconPlus,
+    IconList,
+    IconX,
+    IconChevronLeft,
+    IconChevronRight,
+    IconCheck,
+    IconXCircle,
+    IconChevronDown,
+    IconArrowRight,
+} from './icons';
 import './App.css';
 
 function timeAgo(iso) {
@@ -50,12 +76,14 @@ export default function App() {
     const [showRules, setShowRules] = useState(false);
     const [newCenter, setNewCenter] = useState({ center_code: '', center_name: '', district: '', email: '', password: '' });
     const [createMsg, setCreateMsg] = useState('');
+    const [createOk, setCreateOk] = useState(null);
     const [viewDocs, setViewDocs] = useState(null); // { app: group, index: number }
     const [showChangePass, setShowChangePass] = useState(false);
     const [passCurrent, setPassCurrent] = useState('');
     const [passNew, setPassNew] = useState('');
     const [passConfirm, setPassConfirm] = useState('');
     const [passMsg, setPassMsg] = useState('');
+    const [passOk, setPassOk] = useState(null);
 
     async function login(e) {
         e.preventDefault();
@@ -143,22 +171,27 @@ export default function App() {
                 body: JSON.stringify(newCenter)
             });
             const data = await res.json();
-            setCreateMsg(res.ok ? `✅ ${data.message}` : `❌ ${data.error || 'Failed'}`);
+            setCreateOk(res.ok);
+            setCreateMsg(res.ok ? data.message || 'Center created' : data.error || 'Failed');
             if (res.ok) setNewCenter({ center_code: '', center_name: '', district: '', email: '', password: '' });
         } catch {
-            setCreateMsg('❌ Network error');
+            setCreateOk(false);
+            setCreateMsg('Network error');
         }
     }
 
     async function handleChangePassword(e) {
         e.preventDefault();
         setPassMsg('');
+        setPassOk(null);
         if (passNew !== passConfirm) {
-            setPassMsg('❌ New passwords do not match');
+            setPassOk(false);
+            setPassMsg('New passwords do not match');
             return;
         }
         if (passNew.length < 6) {
-            setPassMsg('❌ New password must be at least 6 characters');
+            setPassOk(false);
+            setPassMsg('New password must be at least 6 characters');
             return;
         }
         try {
@@ -169,16 +202,19 @@ export default function App() {
             });
             const data = await res.json();
             if (res.ok) {
-                setPassMsg('✅ Password changed successfully');
+                setPassOk(true);
+                setPassMsg('Password changed successfully');
                 setPassCurrent('');
                 setPassNew('');
                 setPassConfirm('');
                 setTimeout(() => setShowChangePass(false), 1500);
             } else {
-                setPassMsg(`❌ ${data.error || 'Failed to change password'}`);
+                setPassOk(false);
+                setPassMsg(data.error || 'Failed to change password');
             }
         } catch {
-            setPassMsg('❌ Network error');
+            setPassOk(false);
+            setPassMsg('Network error');
         }
     }
 
@@ -260,7 +296,7 @@ export default function App() {
         if (filtered.length === 0) {
             return (
                 <div className="empty">
-                    <div className="empty-icon" aria-hidden="true">📭</div>
+                    <div className="empty-icon" aria-hidden="true"><IconInbox size={64} strokeWidth={1.5} /></div>
                     <h3>{loading ? 'Loading applications…' : 'No applications yet'}</h3>
                     <p>{loading ? 'Please wait while we fetch the latest data.' : 'Verified WhatsApp submissions will appear here once citizens upload documents.'}</p>
                 </div>
@@ -268,7 +304,7 @@ export default function App() {
         }
         return groupedByService.map(([svc, items]) => (
             <section key={svc} className="service-group" aria-labelledby={`svc-${svc}`}>
-                <h2 id={`svc-${svc}`}>📁 {svc} <span className="count">{items.length}</span></h2>
+                <h2 id={`svc-${svc}`}><IconFolder size={20} /> {svc} <span className="count">{items.length}</span></h2>
                 <div className="cards">
                     {items.map((g, idx) => {
                         const name = g.name || 'Name not shared';
@@ -279,26 +315,26 @@ export default function App() {
                                     <div className="req-user">
                                         <strong>{name}</strong>
                                         <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" aria-label={`Chat on WhatsApp with ${name}`}>
-                                            📱 {g.phone}
+                                            <IconPhone size={14} /> {g.phone}
                                         </a>
                                     </div>
-                                    <time className="time" dateTime={g.createdAt}>{timeAgo(g.createdAt)}</time>
+                                    <time className="time" dateTime={g.createdAt}><IconClock size={13} /> {timeAgo(g.createdAt)}</time>
                                 </div>
                                 <div className="req-meta">
-                                    <span className="pill token" aria-label={`Token: ${g.token}`}>🎫 {g.token}</span>
-                                    <span className="pill center" aria-label={`Center: ${g.centerCode}`}>🏢 {g.centerCode}</span>
-                                    {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}>📄 {g.docs.length} docs</span>}
+                                    <span className="pill token" aria-label={`Token: ${g.token}`}><IconTicket size={13} /> {g.token}</span>
+                                    <span className="pill center" aria-label={`Center: ${g.centerCode}`}><IconBuilding size={13} /> {g.centerCode}</span>
+                                    {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}><IconFileText size={13} /> {g.docs.length} docs</span>}
                                 </div>
                                 <div className="docs">
                                     {g.docs.map((d, i) => d.url ? (
                                         <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`}>
-                                            <span className="doc-icon" aria-hidden="true">📄</span>
+                                            <span className="doc-icon" aria-hidden="true"><IconFileText size={15} /></span>
                                             <span className="doc-label">{d.label}</span>
-                                            <span className="doc-arrow" aria-hidden="true">→</span>
+                                            <IconArrowRight size={15} className="doc-arrow-icon" aria-hidden="true" />
                                         </a>
                                     ) : (
                                         <span key={i} className="doc-chip muted" aria-label={`${d.label} (not available)`}>
-                                            <span className="doc-icon" aria-hidden="true">📄</span>
+                                            <span className="doc-icon" aria-hidden="true"><IconFileText size={15} /></span>
                                             <span className="doc-label">{d.label}</span>
                                             <span className="doc-badge" aria-hidden="true">—</span>
                                         </span>
@@ -316,7 +352,7 @@ export default function App() {
         return (
             <div className="login-wrap">
                 <div className="login-card">
-                    <div className="login-logo" aria-hidden="true">🏛️</div>
+                    <div className="login-logo" aria-hidden="true"><IconLandmark size={52} strokeWidth={1.6} /></div>
                     <h1>Akshaya Sahayi</h1>
                     <p className="muted">Kerala Akshaya Center — Document Verification Dashboard</p>
                     <form onSubmit={login} noValidate>
@@ -347,7 +383,7 @@ export default function App() {
                                 className="form-input"
                             />
                         </div>
-                        {loginError && <div className="login-error" role="alert">{loginError}</div>}
+                        {loginError && <div className="login-error" role="alert"><IconAlert size={16} /><span>{loginError}</span></div>}
                         <button className="btn-primary" type="submit" disabled={!username || !password}>
                             <span>Sign In</span>
                         </button>
@@ -362,7 +398,7 @@ export default function App() {
         <div className="dash">
             <header className="dash-header" role="banner">
                 <div className="dash-header-brand">
-                    <div className="dash-header-logo" aria-hidden="true">🏛️</div>
+                    <div className="dash-header-logo" aria-hidden="true"><IconLandmark size={26} strokeWidth={2} /></div>
                     <div>
                         <h1>Akshaya Sahayi</h1>
                         <div className="dash-header-subtitle">
@@ -375,7 +411,7 @@ export default function App() {
                 <div className="header-actions">
                     {role !== 'superadmin' && (
                         <button className="btn-ghost" onClick={() => { setPassCurrent(''); setPassNew(''); setPassConfirm(''); setPassMsg(''); setShowChangePass(true); }}>
-                            🔐 Change Password
+                            <IconLock size={16} /> Change Password
                         </button>
                     )}
                     <button className="btn-ghost" onClick={loadRequests} disabled={loading} aria-busy={loading}>
@@ -385,14 +421,16 @@ export default function App() {
                                 Loading…
                             </>
                         ) : (
-                            '⟳ Refresh'
+                            <>
+                                <IconRefresh size={16} /> Refresh
+                            </>
                         )}
                     </button>
-                    <button className="btn-ghost" onClick={logout}>Logout</button>
+                    <button className="btn-ghost" onClick={logout}><IconLogout size={16} /> Logout</button>
                 </div>
             </header>
 
-            {fetchError && <div className="alert-error">⚠️ {fetchError}</div>}
+            {fetchError && <div className="alert-error"><IconAlert size={18} /><span>{fetchError}</span></div>}
 
             <section className="stats" aria-label="Dashboard statistics" aria-busy={loading}>
                 {loading ? (
@@ -405,28 +443,28 @@ export default function App() {
                 ) : (
                     <>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--brand-100)', color: 'var(--brand-700)'}} aria-hidden="true">📋</div>
+                            <div className="stat-icon" style={{background: 'var(--brand-100)', color: 'var(--brand-700)'}} aria-hidden="true"><IconClipboard size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.submissions}</span>
                                 <span className="stat-label">Applications</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--accent-100)', color: 'var(--accent-700)'}} aria-hidden="true">🛂</div>
+                            <div className="stat-icon" style={{background: 'var(--accent-100)', color: 'var(--accent-700)'}} aria-hidden="true"><IconCard size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.services}</span>
                                 <span className="stat-label">Services</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--success-100)', color: 'var(--success-700)'}} aria-hidden="true">👥</div>
+                            <div className="stat-icon" style={{background: 'var(--success-100)', color: 'var(--success-700)'}} aria-hidden="true"><IconUsers size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.citizens}</span>
                                 <span className="stat-label">Citizens</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--warn-100)', color: 'var(--warn-700)'}} aria-hidden="true">📄</div>
+                            <div className="stat-icon" style={{background: 'var(--warn-100)', color: 'var(--warn-700)'}} aria-hidden="true"><IconFileText size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.documents}</span>
                                 <span className="stat-label">Documents</span>
@@ -468,8 +506,8 @@ export default function App() {
             {role === 'superadmin' && (
                 <section className="panel">
                     <button className="panel-toggle" onClick={() => setShowCreate(v => !v)} aria-expanded={showCreate}>
-                        <span className="panel-title">➕ Create Akshaya Center</span>
-                        <span className="icon">{showCreate ? '▾' : '▸'}</span>
+                        <span className="panel-title"><IconPlus size={16} /> Create Akshaya Center</span>
+                    <span className="icon"><IconChevronDown size={16} /></span>
                     </button>
                     {showCreate && (
                         <div className="panel-content">
@@ -495,7 +533,12 @@ export default function App() {
                                     <input id="cpassword" type="password" placeholder="Set a strong password" value={newCenter.password} onChange={e => setNewCenter({ ...newCenter, password: e.target.value })} required className="form-input" />
                                 </div>
                                 <button className="btn-primary" type="submit">Create Center</button>
-                                {createMsg && <p className={`create-msg ${createMsg.includes('✅') ? 'success' : 'error'}`}>{createMsg}</p>}
+                                {createMsg && (
+                                    <p className={`create-msg ${createOk ? 'success' : 'error'}`}>
+                                        {createOk ? <IconCheck size={15} /> : <IconXCircle size={15} />}
+                                        <span>{createMsg}</span>
+                                    </p>
+                                )}
                             </form>
                         </div>
                     )}
@@ -504,8 +547,8 @@ export default function App() {
 
             <section className="panel">
                 <button className="panel-toggle" onClick={() => setShowRules(v => !v)} aria-expanded={showRules}>
-                    <span className="panel-title">📋 Document guidelines for {centerCode}</span>
-                    <span className="icon">{showRules ? '▾' : '▸'}</span>
+                    <span className="panel-title"><IconList size={16} /> Document guidelines for {centerCode}</span>
+                    <span className="icon"><IconChevronDown size={16} /></span>
                 </button>
                 {showRules && <div className="panel-content"><AddRuleForm /></div>}
             </section>
@@ -516,16 +559,16 @@ export default function App() {
             <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Document viewer">
                 <div className="doc-modal-backdrop" onClick={() => setViewDocs(null)} />
                 <div className="doc-modal-content">
-                    <button className="doc-modal-close" onClick={() => setViewDocs(null)} aria-label="Close">✕</button>
+                    <button className="doc-modal-close" onClick={() => setViewDocs(null)} aria-label="Close"><IconX size={18} /></button>
                     <div className="doc-modal-header">
                         <div>
                             <strong>{viewDocs.app.name || 'Name not shared'}</strong>
                             <span className="muted"> · {viewDocs.app.phone}</span>
                         </div>
-                        <span className="pill token">🎫 {viewDocs.app.token}</span>
+                        <span className="pill token"><IconTicket size={13} /> {viewDocs.app.token}</span>
                     </div>
                     <div className="doc-modal-carousel">
-                        <button className="carousel-btn prev" onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: (v.index - 1 + v.app.docs.filter(d => d.url).length) % v.app.docs.filter(d => d.url).length})) }} aria-label="Previous" disabled={viewDocs.index === 0}>‹</button>
+                        <button className="carousel-btn prev" onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: (v.index - 1 + v.app.docs.filter(d => d.url).length) % v.app.docs.filter(d => d.url).length})) }} aria-label="Previous" disabled={viewDocs.index === 0}><IconChevronLeft size={26} /></button>
                         <div className="carousel-viewport">
                             {viewDocs.app.docs.filter(d => d.url).map((d, i) => (
                                 <div key={i} className={`carousel-slide ${i === viewDocs.index ? 'active' : ''}`}>
@@ -536,7 +579,7 @@ export default function App() {
                                 </div>
                             ))}
                         </div>
-                        <button className="carousel-btn next" onClick={e => { e.stopPropagation(); const visible = viewDocs.app.docs.filter(d => d.url).length; setViewDocs(v => v && ({...v, index: (v.index + 1) % visible})) }} aria-label="Next" disabled={viewDocs.index === viewDocs.app.docs.filter(d => d.url).length - 1}>›</button>
+                        <button className="carousel-btn next" onClick={e => { e.stopPropagation(); const visible = viewDocs.app.docs.filter(d => d.url).length; setViewDocs(v => v && ({...v, index: (v.index + 1) % visible})) }} aria-label="Next" disabled={viewDocs.index === viewDocs.app.docs.filter(d => d.url).length - 1}><IconChevronRight size={26} /></button>
                     </div>
                     <div className="doc-modal-dots">
                         {viewDocs.app.docs.filter(d => d.url).map((_, i) => (
@@ -555,9 +598,9 @@ export default function App() {
             <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Change password">
                 <div className="doc-modal-backdrop" onClick={() => setShowChangePass(false)} />
                 <div className="doc-modal-content" style={{maxWidth: '420px'}}>
-                    <button className="doc-modal-close" onClick={() => setShowChangePass(false)} aria-label="Close">✕</button>
+                    <button className="doc-modal-close" onClick={() => setShowChangePass(false)} aria-label="Close"><IconX size={18} /></button>
                     <div className="doc-modal-header">
-                        <h3 style={{margin: 0, fontSize: '18px'}}>🔐 Change Password</h3>
+                        <h3 style={{margin: 0, fontSize: '18px'}}><IconLock size={18} /> Change Password</h3>
                     </div>
                     <form onSubmit={handleChangePassword} style={{padding: 'var(--space-5)'}}>
                         <div className="form-group">
@@ -572,7 +615,12 @@ export default function App() {
                             <label className="form-label" htmlFor="passConfirm">Confirm new password</label>
                             <input id="passConfirm" type="password" value={passConfirm} onChange={e => setPassConfirm(e.target.value)} required autoComplete="new-password" className="form-input" />
                         </div>
-                        {passMsg && <p className={passMsg.startsWith('✅') ? 'create-msg success' : 'create-msg error'} style={{marginTop: 'var(--space-3)'}}>{passMsg}</p>}
+                        {passMsg && (
+                            <p className={`create-msg ${passOk ? 'success' : 'error'}`} style={{marginTop: 'var(--space-3)'}}>
+                                {passOk ? <IconCheck size={15} /> : <IconXCircle size={15} />}
+                                <span>{passMsg}</span>
+                            </p>
+                        )}
                         <div style={{display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)'}}>
                             <button type="button" className="btn-ghost" style={{flex: 1}} onClick={() => setShowChangePass(false)}>Cancel</button>
                             <button type="submit" className="btn-primary" style={{flex: 1}}>Save</button>

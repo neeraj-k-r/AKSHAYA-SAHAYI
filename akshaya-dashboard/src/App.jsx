@@ -51,6 +51,11 @@ export default function App() {
     const [newCenter, setNewCenter] = useState({ center_code: '', center_name: '', district: '', email: '', password: '' });
     const [createMsg, setCreateMsg] = useState('');
     const [viewDocs, setViewDocs] = useState(null); // { app: group, index: number }
+    const [showChangePass, setShowChangePass] = useState(false);
+    const [passCurrent, setPassCurrent] = useState('');
+    const [passNew, setPassNew] = useState('');
+    const [passConfirm, setPassConfirm] = useState('');
+    const [passMsg, setPassMsg] = useState('');
 
     async function login(e) {
         e.preventDefault();
@@ -142,6 +147,38 @@ export default function App() {
             if (res.ok) setNewCenter({ center_code: '', center_name: '', district: '', email: '', password: '' });
         } catch {
             setCreateMsg('❌ Network error');
+        }
+    }
+
+    async function handleChangePassword(e) {
+        e.preventDefault();
+        setPassMsg('');
+        if (passNew !== passConfirm) {
+            setPassMsg('❌ New passwords do not match');
+            return;
+        }
+        if (passNew.length < 6) {
+            setPassMsg('❌ New password must be at least 6 characters');
+            return;
+        }
+        try {
+            const res = await fetch(`${API_BASE}/api/auth/change-password`, {
+                method: 'PUT',
+                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ currentPassword: passCurrent, newPassword: passNew })
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setPassMsg('✅ Password changed successfully');
+                setPassCurrent('');
+                setPassNew('');
+                setPassConfirm('');
+                setTimeout(() => setShowChangePass(false), 1500);
+            } else {
+                setPassMsg(`❌ ${data.error || 'Failed to change password'}`);
+            }
+        } catch {
+            setPassMsg('❌ Network error');
         }
     }
 
@@ -329,6 +366,11 @@ export default function App() {
                     <p className="muted">Centre {centerCode}{role === 'superadmin' ? ' · Superadmin' : ''}</p>
                 </div>
                 <div className="header-actions">
+                    {role !== 'superadmin' && (
+                        <button className="btn-ghost" onClick={() => { setPassCurrent(''); setPassNew(''); setPassConfirm(''); setPassMsg(''); setShowChangePass(true); }}>
+                            🔐 Change Password
+                        </button>
+                    )}
                     <button className="btn-ghost" onClick={loadRequests} disabled={loading} aria-busy={loading}>
                         {loading ? (
                             <>
@@ -498,6 +540,37 @@ export default function App() {
                         <span>{viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.label || 'Document'}</span>
                         <span>{viewDocs.index + 1} / {viewDocs.app.docs.filter(d => d.url).length}</span>
                     </div>
+                </div>
+            </div>
+        )}
+
+        {showChangePass && (
+            <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Change password">
+                <div className="doc-modal-backdrop" onClick={() => setShowChangePass(false)} />
+                <div className="doc-modal-content" style={{maxWidth: '420px'}}>
+                    <button className="doc-modal-close" onClick={() => setShowChangePass(false)} aria-label="Close">✕</button>
+                    <div className="doc-modal-header">
+                        <h3 style={{margin: 0, fontSize: '18px'}}>🔐 Change Password</h3>
+                    </div>
+                    <form onSubmit={handleChangePassword} style={{padding: 'var(--space-5)'}}>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="passCurrent">Current password</label>
+                            <input id="passCurrent" type="password" value={passCurrent} onChange={e => setPassCurrent(e.target.value)} required autoComplete="current-password" className="form-input" />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="passNew">New password</label>
+                            <input id="passNew" type="password" value={passNew} onChange={e => setPassNew(e.target.value)} required autoComplete="new-password" minLength={6} className="form-input" />
+                        </div>
+                        <div className="form-group">
+                            <label className="form-label" htmlFor="passConfirm">Confirm new password</label>
+                            <input id="passConfirm" type="password" value={passConfirm} onChange={e => setPassConfirm(e.target.value)} required autoComplete="new-password" className="form-input" />
+                        </div>
+                        {passMsg && <p className={passMsg.startsWith('✅') ? 'create-msg success' : 'create-msg error'} style={{marginTop: 'var(--space-3)'}}>{passMsg}</p>}
+                        <div style={{display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)'}}>
+                            <button type="button" className="btn-ghost" style={{flex: 1}} onClick={() => setShowChangePass(false)}>Cancel</button>
+                            <button type="submit" className="btn-primary" style={{flex: 1}}>Save</button>
+                        </div>
+                    </form>
                 </div>
             </div>
         )}

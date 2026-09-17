@@ -1376,6 +1376,60 @@ app.post('/api/auth/login', async (req, res) => {
     }
 });
 
+// Change password endpoint
+app.put('/api/auth/change-password', authenticateToken, async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const userEmail = req.user.email;
+
+        if (!currentPassword || !newPassword) {
+            return res.status(400).json({ error: 'Current password and new password are required' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'New password must be at least 6 characters' });
+        }
+
+        // Superadmin (hardcoded) cannot change password via this endpoint
+        if (userEmail === 'admin@akshaya.com') {
+            return res.status(403).json({ error: 'Superadmin password cannot be changed here' });
+        }
+
+        // Get user from database
+        const result = await db.query(
+            'SELECT * FROM akshaya_centers WHERE email = $1',
+            [userEmail]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Center not found' });
+        }
+
+        const user = result.rows[0];
+
+        // Verify current password
+        const validPass = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!validPass) {
+            return res.status(401).json({ error: 'Current password is incorrect' });
+        }
+
+        // Hash new password
+        const newHash = await bcrypt.hash(newPassword, 10);
+
+        // Update password in database
+        await db.query(
+            'UPDATE akshaya_centers SET password_hash = $1 WHERE email = $2',
+            [newHash, userEmail]
+        );
+
+        return res.json({ success: true, message: 'Password changed successfully' });
+
+    } catch (error) {
+        console.error("Change password error:", error);
+        return res.status(500).json({ error: 'Failed to change password' });
+    }
+});
+
 app.post('/api/admin/create-center', authenticateToken, async (req, res) => {
     try {
         const { center_code, center_name, district, email, password } = req.body;

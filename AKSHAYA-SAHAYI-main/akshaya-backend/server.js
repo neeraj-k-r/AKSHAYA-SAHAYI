@@ -80,6 +80,38 @@ function saveLocalDb() {
     }
 }
 
+/*
+  Next sequential queue token for a category at a centre.
+
+  Each (category, centre) pair has its own queue that starts at 001,
+  so a citizen's token shows exactly how many earlier requests are
+  ahead of them at THAT centre. Example: "INC-003" for the third
+  Income Certificate request at a centre.
+*/
+async function nextQueueToken(category, centerCode) {
+    const prefix = String(category || "").substring(0, 3).toUpperCase() || "DOC";
+    let existing = 0;
+
+    try {
+        const result = await db.query(
+            `SELECT COUNT(*)::int AS n FROM service_requests
+             WHERE category ILIKE $1 AND assigned_center_code ILIKE $2`,
+            [String(category || ""), String(centerCode || "")]
+        );
+        existing = result.rows[0]?.n || 0;
+    } catch (err) {
+        isDbConnected = false;
+        console.warn("⚠️ Token count query failed, counting local only:", err.message);
+    }
+
+    const localCount = fallbackRequests.filter(r =>
+        String(r.category || "").toLowerCase() === String(category || "").toLowerCase() &&
+        String(r.assigned_center_code || "").toLowerCase() === String(centerCode || "").toLowerCase()
+    ).length;
+
+    return `${prefix}-${String(existing + localCount + 1).padStart(3, "0")}`;
+}
+
 // Middleware for Dashboard Security
 const authenticateToken = (req, res, next) => {
     const token = req.headers['authorization']?.split(' ')[1];
@@ -260,7 +292,7 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         });
 
         const permanentUrls = await Promise.all(uploadPromises);
-        const tokenNumber = `${category ? category.substring(0, 3).toUpperCase() : 'DOC'}-${Date.now().toString().slice(-6)}`;
+        const tokenNumber = await nextQueueToken(category, assigned_center_code);
 
         if (isDbConnected) {
             try {
@@ -303,9 +335,9 @@ app.get('/api/dashboard/requests', authenticateToken, async (req, res) => {
             try {
                 let result;
                 if (req.user.role === 'superadmin') {
-                    result = await db.query(`SELECT * FROM service_requests ORDER BY created_at DESC`);
+                    result = await db.query(`SELECT * FROM service_requests ORDER BY created_at ASC`);
                 } else {
-                    result = await db.query(`SELECT * FROM service_requests WHERE assigned_center_code = $1 ORDER BY category ASC, created_at DESC`, [req.user.center_code]);
+                    result = await db.query(`SELECT * FROM service_requests WHERE assigned_center_code = $1 ORDER BY category ASC, created_at ASC`, [req.user.center_code]);
                 }
                 requestsList = result.rows;
             } catch (dbErr) {

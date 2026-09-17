@@ -27,13 +27,21 @@ async function setupDatabase() {
         await db.query(`
             CREATE TABLE IF NOT EXISTS service_requests (
                 id SERIAL PRIMARY KEY,
-                token_number VARCHAR(50) UNIQUE NOT NULL,
+                token_number VARCHAR(50) NOT NULL,
                 category VARCHAR(100) NOT NULL,
                 citizen_phone VARCHAR(20) NOT NULL,
                 document_urls TEXT[] NOT NULL,
                 assigned_center_code VARCHAR(50) NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+        `);
+
+        // Tokens are queue numbers per (category, centre), so they may
+        // repeat across centres. Drop the old UNIQUE constraint so a
+        // second centre's "INC-001" doesn't get rejected.
+        await db.query(`
+            ALTER TABLE service_requests
+            DROP CONSTRAINT IF EXISTS service_requests_token_number_key;
         `);
 
         console.log("Tables created successfully.");

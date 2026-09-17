@@ -26,6 +26,12 @@ import {
     IconXCircle,
     IconChevronDown,
     IconArrowRight,
+    IconSun,
+    IconMoon,
+    IconSparkles,
+    IconExternalLink,
+    IconShieldCheck,
+    IconSearch,
 } from './icons';
 import './App.css';
 
@@ -64,6 +70,8 @@ export default function App() {
     const [token, setToken] = useState(() => localStorage.getItem('token') || '');
     const [role, setRole] = useState(() => localStorage.getItem('role') || '');
     const [centerCode, setCenterCode] = useState(() => localStorage.getItem('center_code') || '');
+    const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+    
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [loginError, setLoginError] = useState('');
@@ -85,14 +93,27 @@ export default function App() {
     const [passMsg, setPassMsg] = useState('');
     const [passOk, setPassOk] = useState(null);
 
-    async function login(e) {
-        e.preventDefault();
+    // Apply theme to document element
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+    }, [theme]);
+
+    const toggleTheme = () => {
+        setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+    };
+
+    async function login(e, overrideEmail, overridePass) {
+        if (e && e.preventDefault) e.preventDefault();
         setLoginError('');
+        const userToLogin = overrideEmail || username;
+        const passToLogin = overridePass || password;
+
         try {
             const res = await fetch(`${API_BASE}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: username, password })
+                body: JSON.stringify({ email: userToLogin, password: passToLogin })
             });
             const data = await res.json();
             if (!res.ok || !data.token) {
@@ -121,8 +142,6 @@ export default function App() {
     }
 
     async function loadRequests() {
-        // Use the live login-state token (not localStorage) so the
-        // Authorization header is guaranteed whenever this screen shows.
         const tok = token || localStorage.getItem('token') || '';
         if (!tok) return;
         setLoading(true);
@@ -146,8 +165,6 @@ export default function App() {
 
     useEffect(() => {
         if (token) {
-            // Initial load on login: fetch-once in effect is intentional.
-            // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
             loadRequests();
         }
     }, [token]);
@@ -161,6 +178,18 @@ export default function App() {
         return () => window.removeEventListener('scroll', onScroll);
     }, []);
 
+    // Keyboard ESC for modal
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                if (viewDocs) setViewDocs(null);
+                if (showChangePass) setShowChangePass(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [viewDocs, showChangePass]);
+
     async function createCenter(e) {
         e.preventDefault();
         setCreateMsg('');
@@ -172,7 +201,7 @@ export default function App() {
             });
             const data = await res.json();
             setCreateOk(res.ok);
-            setCreateMsg(res.ok ? data.message || 'Center created' : data.error || 'Failed');
+            setCreateMsg(res.ok ? data.message || 'Center created successfully' : data.error || 'Failed to create center');
             if (res.ok) setNewCenter({ center_code: '', center_name: '', district: '', email: '', password: '' });
         } catch {
             setCreateOk(false);
@@ -218,8 +247,6 @@ export default function App() {
         }
     }
 
-    // One card per application: group rows by service + person + center,
-    // merging every verified upload into a single document list.
     const groups = useMemo(() => {
         const map = new Map();
         const sorted = [...requests].sort(
@@ -252,7 +279,7 @@ export default function App() {
             g.docs.push(...rowDocs(r));
         }
         return [...map.values()].sort(
-            (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)
+            (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0)
         );
     }, [requests]);
 
@@ -296,9 +323,9 @@ export default function App() {
         if (filtered.length === 0) {
             return (
                 <div className="empty">
-                    <div className="empty-icon" aria-hidden="true"><IconInbox size={64} strokeWidth={1.5} /></div>
-                    <h3>{loading ? 'Loading applications…' : 'No applications yet'}</h3>
-                    <p>{loading ? 'Please wait while we fetch the latest data.' : 'Verified WhatsApp submissions will appear here once citizens upload documents.'}</p>
+                    <div className="empty-icon" aria-hidden="true"><IconInbox size={48} strokeWidth={1.5} /></div>
+                    <h3>{loading ? 'Loading requests…' : 'No applications found'}</h3>
+                    <p>{loading ? 'Retrieving citizen document submissions from Kerala Akshaya network.' : 'WhatsApp submissions and document uploads from citizens will appear here automatically.'}</p>
                 </div>
             );
         }
@@ -307,15 +334,15 @@ export default function App() {
                 <h2 id={`svc-${svc}`}><IconFolder size={20} /> {svc} <span className="count">{items.length}</span></h2>
                 <div className="cards">
                     {items.map((g, idx) => {
-                        const name = g.name || 'Name not shared';
+                        const name = g.name || 'Citizen Application';
                         return (
                             <article key={g.key} className="req-card" style={{animationDelay: `${idx * 30}ms`}} onClick={() => g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })} role="button" tabIndex={0} onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && g.docs.some(d => d.url) && setViewDocs({ app: g, index: 0 })}>
                                 <div className="req-top">
                                     <div className="avatar" aria-hidden="true">{(g.name ? g.name[0] : g.phone[0] || '?').toUpperCase()}</div>
                                     <div className="req-user">
                                         <strong>{name}</strong>
-                                        <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" aria-label={`Chat on WhatsApp with ${name}`}>
-                                            <IconPhone size={14} /> {g.phone}
+                                        <a className="phone" href={`https://wa.me/${g.phone}`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} aria-label={`Chat on WhatsApp with ${name}`}>
+                                            <IconPhone size={13} /> {g.phone}
                                         </a>
                                     </div>
                                     <time className="time" dateTime={g.createdAt}><IconClock size={13} /> {timeAgo(g.createdAt)}</time>
@@ -323,11 +350,11 @@ export default function App() {
                                 <div className="req-meta">
                                     <span className="pill token" aria-label={`Token: ${g.token}`}><IconTicket size={13} /> {g.token}</span>
                                     <span className="pill center" aria-label={`Center: ${g.centerCode}`}><IconBuilding size={13} /> {g.centerCode}</span>
-                                    {g.docs.length > 1 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}><IconFileText size={13} /> {g.docs.length} docs</span>}
+                                    {g.docs.length > 0 && <span className="pill docs-count" aria-label={`${g.docs.length} documents uploaded`}><IconFileText size={13} /> {g.docs.length} docs</span>}
                                 </div>
                                 <div className="docs">
                                     {g.docs.map((d, i) => d.url ? (
-                                        <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" aria-label={`View ${d.label}`}>
+                                        <a key={i} className="doc-chip" href={d.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} aria-label={`View ${d.label}`}>
                                             <span className="doc-icon" aria-hidden="true"><IconFileText size={15} /></span>
                                             <span className="doc-label">{d.label}</span>
                                             <IconArrowRight size={15} className="doc-arrow-icon" aria-hidden="true" />
@@ -352,9 +379,11 @@ export default function App() {
         return (
             <div className="login-wrap">
                 <div className="login-card">
-                    <div className="login-logo" aria-hidden="true"><IconLandmark size={52} strokeWidth={1.6} /></div>
+                    <div className="login-logo" aria-hidden="true"><IconLandmark size={44} strokeWidth={1.8} /></div>
+                    <div className="login-badge"><IconShieldCheck size={14} /> State Digital Portal</div>
                     <h1>Akshaya Sahayi</h1>
-                    <p className="muted">Kerala Akshaya Center — Document Verification Dashboard</p>
+                    <p className="muted">Government of Kerala — Citizen Document Verification & E-Governance</p>
+                    
                     <form onSubmit={login} noValidate>
                         <div className="form-group">
                             <label className="form-label" htmlFor="email">Email address</label>
@@ -385,10 +414,22 @@ export default function App() {
                         </div>
                         {loginError && <div className="login-error" role="alert"><IconAlert size={16} /><span>{loginError}</span></div>}
                         <button className="btn-primary" type="submit" disabled={!username || !password}>
-                            <span>Sign In</span>
+                            <span>Sign In to Dashboard</span>
+                            <IconArrowRight size={16} />
                         </button>
                     </form>
-                    <p className="login-hint">Demo: admin@akshaya.com / any password</p>
+
+                    <div className="demo-quick-section">
+                        <div className="demo-title">Quick Demo Sign-In</div>
+                        <div className="demo-buttons">
+                            <button className="btn-demo" onClick={() => { setUsername('admin@akshaya.com'); setPassword('admin123'); login(null, 'admin@akshaya.com', 'admin123'); }}>
+                                <IconSparkles size={14} /> Superadmin
+                            </button>
+                            <button className="btn-demo" onClick={() => { setUsername('center@akshaya.gov.in'); setPassword('center123'); login(null, 'center@akshaya.gov.in', 'center123'); }}>
+                                <IconBuilding size={14} /> Center Official
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         );
@@ -398,39 +439,42 @@ export default function App() {
         <div className="dash">
             <header className="dash-header" role="banner">
                 <div className="dash-header-brand">
-                    <div className="dash-header-logo" aria-hidden="true"><IconLandmark size={26} strokeWidth={2} /></div>
+                    <div className="dash-header-logo" aria-hidden="true"><IconLandmark size={24} strokeWidth={2} /></div>
                     <div>
                         <h1>Akshaya Sahayi</h1>
                         <div className="dash-header-subtitle">
                             <span>Centre <strong>{centerCode}</strong></span>
                             <span className="separator" aria-hidden="true">·</span>
-                            <span>{role === 'superadmin' ? 'Superadmin' : 'Center User'}</span>
+                            <span>{role === 'superadmin' ? 'Superadmin Portal' : 'Official Portal'}</span>
+                            <span className="live-indicator"><span className="pulse-dot" /> Live</span>
                         </div>
                     </div>
                 </div>
                 <div className="header-actions">
+                    <button className="btn-ghost btn-icon-only" onClick={toggleTheme} title="Toggle Theme" aria-label="Toggle dark/light theme">
+                        {theme === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
+                    </button>
                     {role !== 'superadmin' && (
                         <button className="btn-ghost" onClick={() => { setPassCurrent(''); setPassNew(''); setPassConfirm(''); setPassMsg(''); setShowChangePass(true); }}>
-                            <IconLock size={16} /> Change Password
+                            <IconLock size={15} /> Password
                         </button>
                     )}
                     <button className="btn-ghost" onClick={loadRequests} disabled={loading} aria-busy={loading}>
                         {loading ? (
                             <>
-                                <span className="spinner" aria-hidden="true" />
-                                Loading…
+                                <span className="spinner" aria-hidden="true" /> Loading…
                             </>
                         ) : (
                             <>
-                                <IconRefresh size={16} /> Refresh
+                                <IconRefresh size={15} /> Refresh
                             </>
                         )}
                     </button>
-                    <button className="btn-ghost" onClick={logout}><IconLogout size={16} /> Logout</button>
+                    <button className="btn-ghost" onClick={logout}><IconLogout size={15} /> Logout</button>
                 </div>
             </header>
 
-            {fetchError && <div className="alert-error"><IconAlert size={18} /><span>{fetchError}</span></div>}
+            {fetchError && <div className="login-error"><IconAlert size={18} /><span>{fetchError}</span></div>}
 
             <section className="stats" aria-label="Dashboard statistics" aria-busy={loading}>
                 {loading ? (
@@ -443,28 +487,28 @@ export default function App() {
                 ) : (
                     <>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--brand-100)', color: 'var(--brand-700)'}} aria-hidden="true"><IconClipboard size={24} strokeWidth={2.2} /></div>
+                            <div className="stat-icon" style={{background: 'rgba(59, 130, 246, 0.15)', color: 'var(--sapphire-main)'}} aria-hidden="true"><IconClipboard size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.submissions}</span>
                                 <span className="stat-label">Applications</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--accent-100)', color: 'var(--accent-700)'}} aria-hidden="true"><IconCard size={24} strokeWidth={2.2} /></div>
+                            <div className="stat-icon" style={{background: 'rgba(245, 158, 11, 0.15)', color: 'var(--kerala-gold)'}} aria-hidden="true"><IconCard size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.services}</span>
                                 <span className="stat-label">Services</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--success-100)', color: 'var(--success-700)'}} aria-hidden="true"><IconUsers size={24} strokeWidth={2.2} /></div>
+                            <div className="stat-icon" style={{background: 'var(--emerald-subtle)', color: 'var(--emerald-main)'}} aria-hidden="true"><IconUsers size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.citizens}</span>
                                 <span className="stat-label">Citizens</span>
                             </div>
                         </article>
                         <article className="stat">
-                            <div className="stat-icon" style={{background: 'var(--warn-100)', color: 'var(--warn-700)'}} aria-hidden="true"><IconFileText size={24} strokeWidth={2.2} /></div>
+                            <div className="stat-icon" style={{background: 'rgba(244, 63, 94, 0.15)', color: 'var(--danger-rose)'}} aria-hidden="true"><IconFileText size={24} strokeWidth={2.2} /></div>
                             <div className="stat-content">
                                 <span className="stat-num">{stats.documents}</span>
                                 <span className="stat-label">Documents</span>
@@ -476,14 +520,19 @@ export default function App() {
 
             <section className="toolbar" aria-label="Search and filters">
                 <div className="search-wrapper">
-                    <label htmlFor="search" className="visually-hidden">Search applications</label>
+                    <span className="search-icon"><IconSearch size={18} /></span>
                     <input
                         id="search"
                         className="search"
                         value={query}
                         onChange={e => setQuery(e.target.value)}
-                        placeholder="Search name, phone, token, service…"
+                        placeholder="Search by citizen name, phone, token ID, or service category…"
                     />
+                    {query && (
+                        <button className="search-clear-btn" onClick={() => setQuery('')} aria-label="Clear search">
+                            <IconX size={16} />
+                        </button>
+                    )}
                 </div>
                 <div className="chips" role="group" aria-label="Filter by service">
                     {services.map(s => {
@@ -496,7 +545,7 @@ export default function App() {
                                 aria-pressed={service === s}
                             >
                                 {s}
-                                {s !== 'All' && <span className="chip-count">{count}</span>}
+                                <span className="chip-count">{count}</span>
                             </button>
                         );
                     })}
@@ -506,8 +555,8 @@ export default function App() {
             {role === 'superadmin' && (
                 <section className="panel">
                     <button className="panel-toggle" onClick={() => setShowCreate(v => !v)} aria-expanded={showCreate}>
-                        <span className="panel-title"><IconPlus size={16} /> Create Akshaya Center</span>
-                    <span className="icon"><IconChevronDown size={16} /></span>
+                        <span className="panel-title"><IconPlus size={16} /> Create Akshaya Center Account</span>
+                        <span className="icon"><IconChevronDown size={16} /></span>
                     </button>
                     {showCreate && (
                         <div className="panel-content">
@@ -518,7 +567,7 @@ export default function App() {
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label" htmlFor="cname">Center name</label>
-                                    <input id="cname" placeholder="e.g. Test Center" value={newCenter.center_name} onChange={e => setNewCenter({ ...newCenter, center_name: e.target.value })} required className="form-input" />
+                                    <input id="cname" placeholder="e.g. Ernakulam Central Akshaya" value={newCenter.center_name} onChange={e => setNewCenter({ ...newCenter, center_name: e.target.value })} required className="form-input" />
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label" htmlFor="cdistrict">District</label>
@@ -532,9 +581,9 @@ export default function App() {
                                     <label className="form-label" htmlFor="cpassword">Password</label>
                                     <input id="cpassword" type="password" placeholder="Set a strong password" value={newCenter.password} onChange={e => setNewCenter({ ...newCenter, password: e.target.value })} required className="form-input" />
                                 </div>
-                                <button className="btn-primary" type="submit">Create Center</button>
+                                <button className="btn-primary" type="submit">Create Center Account</button>
                                 {createMsg && (
-                                    <p className={`create-msg ${createOk ? 'success' : 'error'}`}>
+                                    <p className={`create-msg ${createOk ? 'success' : 'error'}`} style={{gridColumn: '1 / -1', marginTop: '0.5rem'}}>
                                         {createOk ? <IconCheck size={15} /> : <IconXCircle size={15} />}
                                         <span>{createMsg}</span>
                                     </p>
@@ -547,88 +596,93 @@ export default function App() {
 
             <section className="panel">
                 <button className="panel-toggle" onClick={() => setShowRules(v => !v)} aria-expanded={showRules}>
-                    <span className="panel-title"><IconList size={16} /> Document guidelines for {centerCode}</span>
+                    <span className="panel-title"><IconList size={16} /> Document verification guidelines for Center {centerCode}</span>
                     <span className="icon"><IconChevronDown size={16} /></span>
                 </button>
                 {showRules && <div className="panel-content"><AddRuleForm /></div>}
             </section>
 
-{listContent}
+            {listContent}
 
             {viewDocs && (
-            <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Document viewer">
-                <div className="doc-modal-backdrop" onClick={() => setViewDocs(null)} />
-                <div className="doc-modal-content">
-                    <button className="doc-modal-close" onClick={() => setViewDocs(null)} aria-label="Close"><IconX size={18} /></button>
-                    <div className="doc-modal-header">
-                        <div>
-                            <strong>{viewDocs.app.name || 'Name not shared'}</strong>
-                            <span className="muted"> · {viewDocs.app.phone}</span>
+                <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Document viewer">
+                    <div className="doc-modal-backdrop" onClick={() => setViewDocs(null)} />
+                    <div className="doc-modal-content">
+                        <button className="doc-modal-close" onClick={() => setViewDocs(null)} aria-label="Close"><IconX size={18} /></button>
+                        <div className="doc-modal-header">
+                            <div>
+                                <strong>{viewDocs.app.name || 'Citizen Application'}</strong>
+                                <span className="muted"> · {viewDocs.app.phone}</span>
+                            </div>
+                            <span className="pill token"><IconTicket size={13} /> {viewDocs.app.token}</span>
                         </div>
-                        <span className="pill token"><IconTicket size={13} /> {viewDocs.app.token}</span>
-                    </div>
-                    <div className="doc-modal-carousel">
-                        <button className="carousel-btn prev" onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: (v.index - 1 + v.app.docs.filter(d => d.url).length) % v.app.docs.filter(d => d.url).length})) }} aria-label="Previous" disabled={viewDocs.index === 0}><IconChevronLeft size={26} /></button>
-                        <div className="carousel-viewport">
-                            {viewDocs.app.docs.filter(d => d.url).map((d, i) => (
-                                <div key={i} className={`carousel-slide ${i === viewDocs.index ? 'active' : ''}`}>
-                                    <img src={d.url} alt={d.label} onError={e => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
-                                    <div className="image-error" style={{display: 'none', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)'}}>
-                                        Failed to load {d.label}
+                        <div className="doc-modal-carousel">
+                            <button className="carousel-btn prev" onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: (v.index - 1 + v.app.docs.filter(d => d.url).length) % v.app.docs.filter(d => d.url).length})) }} aria-label="Previous" disabled={viewDocs.index === 0}><IconChevronLeft size={24} /></button>
+                            <div className="carousel-viewport">
+                                {viewDocs.app.docs.filter(d => d.url).map((d, i) => (
+                                    <div key={i} className={`carousel-slide ${i === viewDocs.index ? 'active' : ''}`}>
+                                        <img src={d.url} alt={d.label} onError={e => { e.target.style.display = 'none'; e.target.nextElementSibling.style.display = 'flex'; }} />
+                                        <div className="image-error" style={{display: 'none', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)'}}>
+                                            Failed to load document preview
+                                        </div>
                                     </div>
-                                </div>
+                                ))}
+                            </div>
+                            <button className="carousel-btn next" onClick={e => { e.stopPropagation(); const visible = viewDocs.app.docs.filter(d => d.url).length; setViewDocs(v => v && ({...v, index: (v.index + 1) % visible})) }} aria-label="Next" disabled={viewDocs.index === viewDocs.app.docs.filter(d => d.url).length - 1}><IconChevronRight size={24} /></button>
+                        </div>
+                        <div className="doc-modal-dots">
+                            {viewDocs.app.docs.filter(d => d.url).map((_, i) => (
+                                <button key={i} className={`dot ${i === viewDocs.index ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: i})) }} aria-label={`View document ${i + 1}`} />
                             ))}
                         </div>
-                        <button className="carousel-btn next" onClick={e => { e.stopPropagation(); const visible = viewDocs.app.docs.filter(d => d.url).length; setViewDocs(v => v && ({...v, index: (v.index + 1) % visible})) }} aria-label="Next" disabled={viewDocs.index === viewDocs.app.docs.filter(d => d.url).length - 1}><IconChevronRight size={26} /></button>
-                    </div>
-                    <div className="doc-modal-dots">
-                        {viewDocs.app.docs.filter(d => d.url).map((_, i) => (
-                            <button key={i} className={`dot ${i === viewDocs.index ? 'active' : ''}`} onClick={e => { e.stopPropagation(); setViewDocs(v => v && ({...v, index: i})) }} aria-label={`View document ${i + 1}`} />
-                        ))}
-                    </div>
-                    <div className="doc-modal-info">
-                        <span>{viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.label || 'Document'}</span>
-                        <span>{viewDocs.index + 1} / {viewDocs.app.docs.filter(d => d.url).length}</span>
+                        <div className="doc-modal-info">
+                            <span>{viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.label || 'Uploaded Document'}</span>
+                            {viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.url && (
+                                <a className="btn-ghost" href={viewDocs.app.docs.filter(d => d.url)[viewDocs.index]?.url} target="_blank" rel="noreferrer" style={{padding: '0.3rem 0.75rem', fontSize: '0.8rem'}}>
+                                    <IconExternalLink size={14} /> Open Original
+                                </a>
+                            )}
+                            <span>{viewDocs.index + 1} / {viewDocs.app.docs.filter(d => d.url).length}</span>
+                        </div>
                     </div>
                 </div>
-            </div>
-        )}
+            )}
 
-        {showChangePass && (
-            <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Change password">
-                <div className="doc-modal-backdrop" onClick={() => setShowChangePass(false)} />
-                <div className="doc-modal-content" style={{maxWidth: '420px'}}>
-                    <button className="doc-modal-close" onClick={() => setShowChangePass(false)} aria-label="Close"><IconX size={18} /></button>
-                    <div className="doc-modal-header">
-                        <h3 style={{margin: 0, fontSize: '18px'}}><IconLock size={18} /> Change Password</h3>
+            {showChangePass && (
+                <div className="doc-modal" role="dialog" aria-modal="true" aria-label="Change password">
+                    <div className="doc-modal-backdrop" onClick={() => setShowChangePass(false)} />
+                    <div className="doc-modal-content" style={{maxWidth: '420px'}}>
+                        <button className="doc-modal-close" onClick={() => setShowChangePass(false)} aria-label="Close"><IconX size={18} /></button>
+                        <div className="doc-modal-header">
+                            <h3 style={{margin: 0, fontSize: '18px'}}><IconLock size={18} /> Change Account Password</h3>
+                        </div>
+                        <form onSubmit={handleChangePassword} style={{padding: '1.25rem 0 0 0'}}>
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="passCurrent">Current password</label>
+                                <input id="passCurrent" type="password" value={passCurrent} onChange={e => setPassCurrent(e.target.value)} required autoComplete="current-password" className="form-input" />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="passNew">New password</label>
+                                <input id="passNew" type="password" value={passNew} onChange={e => setPassNew(e.target.value)} required autoComplete="new-password" minLength={6} className="form-input" />
+                            </div>
+                            <div className="form-group">
+                                <label className="form-label" htmlFor="passConfirm">Confirm new password</label>
+                                <input id="passConfirm" type="password" value={passConfirm} onChange={e => setPassConfirm(e.target.value)} required autoComplete="new-password" className="form-input" />
+                            </div>
+                            {passMsg && (
+                                <p className={`rules-status ${passOk ? 'success' : 'error'}`} style={{marginTop: '0.75rem'}}>
+                                    {passOk ? <IconCheck size={15} /> : <IconXCircle size={15} />}
+                                    <span>{passMsg}</span>
+                                </p>
+                            )}
+                            <div style={{display: 'flex', gap: '0.75rem', marginTop: '1.25rem'}}>
+                                <button type="button" className="btn-ghost" style={{flex: 1}} onClick={() => setShowChangePass(false)}>Cancel</button>
+                                <button type="submit" className="btn-primary" style={{flex: 1}}>Save Password</button>
+                            </div>
+                        </form>
                     </div>
-                    <form onSubmit={handleChangePassword} style={{padding: 'var(--space-5)'}}>
-                        <div className="form-group">
-                            <label className="form-label" htmlFor="passCurrent">Current password</label>
-                            <input id="passCurrent" type="password" value={passCurrent} onChange={e => setPassCurrent(e.target.value)} required autoComplete="current-password" className="form-input" />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label" htmlFor="passNew">New password</label>
-                            <input id="passNew" type="password" value={passNew} onChange={e => setPassNew(e.target.value)} required autoComplete="new-password" minLength={6} className="form-input" />
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label" htmlFor="passConfirm">Confirm new password</label>
-                            <input id="passConfirm" type="password" value={passConfirm} onChange={e => setPassConfirm(e.target.value)} required autoComplete="new-password" className="form-input" />
-                        </div>
-                        {passMsg && (
-                            <p className={`create-msg ${passOk ? 'success' : 'error'}`} style={{marginTop: 'var(--space-3)'}}>
-                                {passOk ? <IconCheck size={15} /> : <IconXCircle size={15} />}
-                                <span>{passMsg}</span>
-                            </p>
-                        )}
-                        <div style={{display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)'}}>
-                            <button type="button" className="btn-ghost" style={{flex: 1}} onClick={() => setShowChangePass(false)}>Cancel</button>
-                            <button type="submit" className="btn-primary" style={{flex: 1}}>Save</button>
-                        </div>
-                    </form>
                 </div>
-            </div>
-        )}
+            )}
         </div>
     );
 }

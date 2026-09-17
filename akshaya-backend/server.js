@@ -142,8 +142,8 @@ function updateSession(phone, values) {
   if it 404s the loop simply moves on.
 */
 const MODEL_CHAIN = [
-    "gemini-flash-latest",
     "gemini-2.5-flash",
+    "gemini-flash-latest",
     "gemini-flash-lite-latest"
 ];
 
@@ -161,6 +161,25 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Caps how long we wait for a promise. Rejects with a timeout error
+ * so the webhook can reply to Kapso in time instead of letting
+ * Kapso time out (citizen would get no reply at all).
+ */
+function withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    });
+    return Promise.race([
+        promise.then(
+            (v) => { clearTimeout(timer); return v; },
+            (e) => { clearTimeout(timer); throw e; }
+        ),
+        timeout
+    ]);
+}
+
 function isRetryableError(error) {
     const status = error?.status;
     const message = String(error?.message || "");
@@ -172,6 +191,7 @@ function isRetryableError(error) {
         message.includes("503") ||
         message.includes("429") ||
         message.includes("500") ||
+        message.includes("timed out") ||
         message.includes("high demand") ||
         message.includes("overloaded") ||
         message.includes("Service Unavailable") ||
@@ -872,8 +892,9 @@ app.post('/api/webhook/document-upload', async (req, res) => {
         console.log("⚖️ Rules:", rulesText.substring(0, 200));
 
         // ---------- 4. Download image + detect MIME ----------
+        // Kept short: every second here eats into Kapso's webhook timeout.
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 25000);
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
         let imageBuffer;
         let mimeType = "image/jpeg";
@@ -990,12 +1011,19 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
         let rawText;
 
         try {
-            rawText = await callGeminiWithRetry(
-                [
-                    prompt,
-                    { inlineData: { data: base64Image, mimeType } }
-                ],
-                { temperature: 0.2, maxRetriesPerModel: 2 }
+            // One attempt per model (fail fast to next model, no backoff
+            // sleeps) + hard time budget, so Kapso gets a reply in time
+            // instead of timing out and sending the citizen nothing.
+            rawText = await withTimeout(
+                callGeminiWithRetry(
+                    [
+                        prompt,
+                        { inlineData: { data: base64Image, mimeType } }
+                    ],
+                    { temperature: 0.2, maxRetriesPerModel: 1 }
+                ),
+                20000,
+                "AI verification"
             );
 
         } catch (aiError) {

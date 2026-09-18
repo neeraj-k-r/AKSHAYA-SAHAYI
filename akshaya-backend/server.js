@@ -307,6 +307,61 @@ async function generateEmbedding(text) {
     return null;
 }
 
+/**
+ * Free fallback vision check via OpenRouter's free-model router.
+ *
+ * OpenAI-compatible chat API with the document photo inline as a
+ * base64 data URL. Model `openrouter/free` auto-selects a free model
+ * that supports image understanding. Set OPENROUTER_MODEL to pin a
+ * specific `:free` model instead.
+ * Returns raw text reply. Throws on missing key / bad response.
+ */
+async function callOpenRouterVision(prompt, base64Image, mimeType) {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
+
+    const model = process.env.OPENROUTER_MODEL || "openrouter/free";
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+            "HTTP-Referer": "https://akshaya-sahayi.onrender.com",
+            "X-Title": "Akshaya Sahayi Doc Verification"
+        },
+        body: JSON.stringify({
+            model,
+            temperature: 0.2,
+            max_tokens: 600,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: prompt },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: `data:${mimeType || "image/jpeg"};base64,${base64Image}`
+                            }
+                        }
+                    ]
+                }
+            ]
+        })
+    });
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        throw new Error(`OpenRouter ${response.status}: ${String(errText).substring(0, 120)}`);
+    }
+
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("OpenRouter returned no content");
+    return String(text);
+}
+
 // ==========================================
 // 8. GENERAL HELPERS
 // ==========================================
@@ -1074,19 +1129,38 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
         } catch (aiError) {
             console.error("❌ All Gemini models failed:", aiError.message);
 
-            const overloaded = isRetryableError(aiError);
+            // ---------- 5b. Free fallback: OpenRouter vision router ----------
+            // Runs only when OPENROUTER_API_KEY is configured; otherwise we
+            // go straight to the RETRY reply below.
+            if (!rawText && process.env.OPENROUTER_API_KEY) {
+                try {
+                    console.log("🔄 Trying OpenRouter free vision fallback...");
+                    rawText = await withTimeout(
+                        callOpenRouterVision(prompt, base64Image, mimeType),
+                        10000,
+                        "OpenRouter verification"
+                    );
+                    console.log("✅ OpenRouter fallback succeeded");
+                } catch (orError) {
+                    console.error("❌ OpenRouter fallback failed:", orError.message);
+                }
+            }
 
-            return res.json({
-                success: true,
-                verification_status: "RETRY",
-                is_valid: false,
-                debug: DEBUG ? `ai: ${aiError.message}` : undefined,
-                reply_message: overloaded
-                    ? "⏳ *Our verification service is very busy right now.*\n\n" +
-                    "Please wait about 30 seconds, then upload your document again. 🙏"
-                    : "⚠️ *Could not check your document right now.*\n\n" +
-                    "Please upload it again in a moment."
-            });
+            if (!rawText) {
+                const overloaded = isRetryableError(aiError);
+
+                return res.json({
+                    success: true,
+                    verification_status: "RETRY",
+                    is_valid: false,
+                    debug: DEBUG ? `ai: ${aiError.message}` : undefined,
+                    reply_message: overloaded
+                        ? "⏳ *Our verification service is very busy right now.*\n\n" +
+                        "Please wait about 30 seconds, then upload your document again. 🙏"
+                        : "⚠️ *Could not check your document right now.*\n\n" +
+                        "Please upload it again in a moment."
+                });
+            }
         }
 
         console.log("🤖 Raw AI output:", rawText);

@@ -138,14 +138,22 @@ function updateSession(phone, values) {
   gemini-flash-latest is FIRST because it auto-routes to a
   healthy version and is less likely to return 503.
 
+  Model availability fluctuates (503 overload waves come and go),
+  so the chain carries several candidates. Pinned versions are tried
+  alongside -latest aliases because they can route to different
+  capacity than the alias.
+
   gemini-flash-lite-latest is FIRST because it is the fastest model
   and most likely to answer inside Kapso's webhook time budget.
-  If it 404s the loop simply moves on to the heavier models.
+  If it 404s/503s the loop simply moves on to the next candidate.
 */
 const MODEL_CHAIN = [
     "gemini-flash-lite-latest",
     "gemini-flash-latest",
-    "gemini-2.5-flash"
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash"
 ];
 
 /*
@@ -207,8 +215,13 @@ function isRetryableError(error) {
 /**
  * Calls Gemini across multiple models with exponential backoff.
  *
+ * Each single attempt carries its own timeout (perAttemptMs) so one
+ * hanging model cannot eat the whole webhook time budget while other
+ * healthy candidates never get tried. The caller additionally caps
+ * the total time with withTimeout().
+ *
  * @param {Array} contentParts  Array passed to generateContent
- * @param {Object} options      { temperature, maxRetriesPerModel }
+ * @param {Object} options      { temperature, maxRetriesPerModel, maxOutputTokens, perAttemptMs }
  * @returns {Promise<string>}   Response text
  */
 async function callGeminiWithRetry(contentParts, options = {}) {
@@ -217,6 +230,8 @@ async function callGeminiWithRetry(contentParts, options = {}) {
     // Cap output length: the verification verdict is a tiny JSON object,
     // and fewer tokens = faster response inside Kapso's webhook budget.
     const maxOutputTokens = options.maxOutputTokens ?? 600;
+    // Per-attempt cap: fail fast to the next model instead of hanging.
+    const perAttemptMs = options.perAttemptMs ?? 8000;
 
     let lastError = null;
 
@@ -230,7 +245,11 @@ async function callGeminiWithRetry(contentParts, options = {}) {
                     generationConfig: { temperature, maxOutputTokens }
                 });
 
-                const result = await model.generateContent(contentParts);
+                const result = await withTimeout(
+                    model.generateContent(contentParts),
+                    perAttemptMs,
+                    modelName
+                );
                 const text = result.response.text();
 
                 console.log(`✅ ${modelName} succeeded`);

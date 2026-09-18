@@ -1224,7 +1224,10 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
             // wrote here, so the new flow was invisible on the dashboard).
             // document_urls entries are "label|url" (dashboard parses both
             // this and legacy plain-URL entries).
-            if (isDbConnected) {
+            // Always attempt the mirror insert: a past transient DB error
+            // must not latch isDbConnected=false forever and silently drop
+            // every later save. A successful insert re-arms the flag.
+            {
                 const dashToken = await nextQueueToken(serviceRequested, centerId || 'GLOBAL');
                 const docLabel = verdict.detected_document || verdict.matched_requirement || serviceRequested;
 
@@ -1244,6 +1247,7 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
                     );
 
                     console.log("💾 Saved to service_requests for dashboard");
+                    isDbConnected = true;
 
                 } catch (dashErr) {
                     // Older DBs lack the citizen_name column — retry without it
@@ -1263,6 +1267,7 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
                             );
 
                             console.log("💾 Saved to service_requests (legacy schema)");
+                            isDbConnected = true;
                         } catch (retryErr) {
                             console.warn("⚠️ Dashboard save skipped:", retryErr.message);
                         }
@@ -1270,8 +1275,6 @@ Reply with ONLY this JSON. No markdown fences, no extra text:
                         console.warn("⚠️ Dashboard save skipped:", dashErr.message);
                     }
                 }
-            } else {
-                console.warn("⚠️ Dashboard save skipped: Postgres not connected");
             }
         }
 

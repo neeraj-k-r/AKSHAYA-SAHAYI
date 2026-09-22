@@ -80,6 +80,7 @@ export default function App() {
     const [fetchError, setFetchError] = useState('');
     const [query, setQuery] = useState('');
     const [service, setService] = useState('All');
+    const [usageMetric, setUsageMetric] = useState('applications'); // applications | citizens | documents
     const [showCreate, setShowCreate] = useState(false);
     const [showRules, setShowRules] = useState(false);
     const [newCenter, setNewCenter] = useState({ center_code: '', center_name: '', district: '', email: '', password: '' });
@@ -298,6 +299,7 @@ export default function App() {
                 (g.name || '').toLowerCase().includes(q) ||
                 (g.token || '').toLowerCase().includes(q) ||
                 g.category.toLowerCase().includes(q) ||
+                (g.centerCode || '').toLowerCase().includes(q) ||
                 g.docs.some(d => d.label.toLowerCase().includes(q))
             );
         });
@@ -578,6 +580,53 @@ export default function App() {
                                 </table>
                             </div>
                         )}
+                    </div>
+                </section>
+            )}
+
+            {role === 'superadmin' && centerUsage.length > 0 && (
+                <section className="panel" aria-label="Center usage graph">
+                    <div className="panel-content usage-block">
+                        <div className="usage-chart-head">
+                            <h2 className="usage-title"><IconCard size={18} /> Usage graph</h2>
+                            <div className="metric-tabs" role="group" aria-label="Chart metric">
+                                {[
+                                    ['applications', 'Applications'],
+                                    ['citizens', 'Citizens'],
+                                    ['documents', 'Documents'],
+                                ].map(([key, label]) => (
+                                    <button
+                                        key={key}
+                                        className={usageMetric === key ? 'metric-tab active' : 'metric-tab'}
+                                        onClick={() => setUsageMetric(key)}
+                                        aria-pressed={usageMetric === key}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="usage-chart">
+                            {centerUsage.map(u => {
+                                const value = u[usageMetric] || 0;
+                                const max = Math.max(...centerUsage.map(x => x[usageMetric] || 0), 1);
+                                return (
+                                    <button
+                                        key={u.center}
+                                        className="ubar-row"
+                                        onClick={() => { setService('All'); setQuery(u.center === '—' ? '' : u.center); }}
+                                        title={`${u.center}: ${value} — click to filter the list below`}
+                                    >
+                                        <span className="ubar-label">{u.center}</span>
+                                        <span className="ubar-track">
+                                            <span className="ubar-fill" style={{ width: `${Math.max((value / max) * 100, value > 0 ? 4 : 0)}%` }} />
+                                        </span>
+                                        <span className="ubar-value">{value}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="muted usage-hint">Click a bar to filter the applications list by that center.</p>
                     </div>
                 </section>
             )}

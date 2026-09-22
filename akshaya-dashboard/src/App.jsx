@@ -310,6 +310,34 @@ export default function App() {
         documents: groups.reduce((n, g) => n + g.docs.length, 0)
     }), [groups]);
 
+    // Superadmin insight: per-center usage (applications, unique citizens,
+    // documents, services). Derived from the same grouped applications as
+    // the headline stats, so the numbers always agree.
+    const centerUsage = useMemo(() => {
+        const map = new Map();
+        for (const g of groups) {
+            const code = (g.centerCode || '—').trim() || '—';
+            let u = map.get(code);
+            if (!u) {
+                u = { center: code, applications: 0, citizens: new Set(), documents: 0, services: new Set() };
+                map.set(code, u);
+            }
+            u.applications += 1;
+            if (g.phone) u.citizens.add(g.phone);
+            u.documents += g.docs.length;
+            u.services.add(g.category);
+        }
+        return [...map.values()]
+            .map(u => ({
+                center: u.center,
+                applications: u.applications,
+                citizens: u.citizens.size,
+                documents: u.documents,
+                services: u.services.size
+            }))
+            .sort((a, b) => b.applications - a.applications || a.center.localeCompare(b.center));
+    }, [groups]);
+
     const groupedByService = useMemo(() => {
         const map = new Map();
         for (const g of filtered) {
@@ -517,6 +545,42 @@ export default function App() {
                     </>
                 )}
             </section>
+
+            {role === 'superadmin' && (
+                <section className="panel" aria-label="Center-wise usage">
+                    <div className="panel-content usage-block">
+                        <h2 className="usage-title"><IconBuilding size={18} /> Center-wise usage</h2>
+                        {centerUsage.length === 0 ? (
+                            <p className="muted">{loading ? 'Loading usage data…' : 'No usage data yet. Verified WhatsApp submissions will appear here per center.'}</p>
+                        ) : (
+                            <div className="usage-table-wrap">
+                                <table className="usage-table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Center</th>
+                                            <th scope="col">Applications</th>
+                                            <th scope="col">Citizens</th>
+                                            <th scope="col">Documents</th>
+                                            <th scope="col">Services</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {centerUsage.map(u => (
+                                            <tr key={u.center}>
+                                                <td><strong>{u.center}</strong></td>
+                                                <td>{u.applications}</td>
+                                                <td>{u.citizens}</td>
+                                                <td>{u.documents}</td>
+                                                <td>{u.services}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                </section>
+            )}
 
             <section className="toolbar" aria-label="Search and filters">
                 <div className="search-wrapper">

@@ -1352,3 +1352,56 @@ body::before {
     padding: 2rem 1.25rem;
   }
 }
+
+/* Center-wise usage (superadmin) */
+.usage-block {
+  display: block;
+}
+
+.usage-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  margin: 0 0 0.9rem 0;
+}
+
+.usage-table-wrap {
+  overflow-x: auto;
+  border-radius: 0.75rem;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.usage-table th,
+.usage-table td {
+  text-align: left;
+  padding: 0.65rem 0.9rem;
+  border-bottom: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.2));
+  white-space: nowrap;
+}
+
+.usage-table th {
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.usage-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.usage-table tbody tr:hover {
+  background: var(--emerald-subtle);
+}
+
+.usage-table td:not(:first-child),
+.usage-table th:not(:first-child) {
+  text-align: right;
+}

@@ -76,6 +76,7 @@ export default function App() {
     const [password, setPassword] = useState('');
     const [loginError, setLoginError] = useState('');
     const [requests, setRequests] = useState([]);
+    const [centers, setCenters] = useState([]);
     const [loading, setLoading] = useState(false);
     const [fetchError, setFetchError] = useState('');
     const [query, setQuery] = useState('');
@@ -140,6 +141,7 @@ export default function App() {
         setRole('');
         setCenterCode('');
         setRequests([]);
+        setCenters([]);
     }
 
     async function loadRequests() {
@@ -167,8 +169,21 @@ export default function App() {
     useEffect(() => {
         if (token) {
             loadRequests();
+            loadCenters();
         }
     }, [token]);
+
+    // Full center registry (public endpoint) so the superadmin usage
+    // view lists every center — including ones with zero submissions.
+    async function loadCenters() {
+        try {
+            const res = await fetch(`${API_BASE}/api/public/centers`);
+            const data = await res.json();
+            if (data && Array.isArray(data.centers)) setCenters(data.centers);
+        } catch {
+            // Usage table still works from requests alone.
+        }
+    }
 
     // Header shadow on scroll
     useEffect(() => {
@@ -313,17 +328,33 @@ export default function App() {
     }), [groups]);
 
     // Superadmin insight: per-center usage (applications, unique citizens,
-    // documents, services). Derived from the same grouped applications as
-    // the headline stats, so the numbers always agree.
+    // documents, services). Seeded with the full center registry so centers
+    // with zero submissions still appear. Derived from the same grouped
+    // applications as the headline stats, so the numbers always agree.
     const centerUsage = useMemo(() => {
         const map = new Map();
-        for (const g of groups) {
-            const code = (g.centerCode || '—').trim() || '—';
-            let u = map.get(code);
+        const ensure = (codeRaw, nameRaw) => {
+            const code = (codeRaw || '—').trim() || '—';
+            const key = code.toUpperCase();
+            let u = map.get(key);
             if (!u) {
-                u = { center: code, applications: 0, citizens: new Set(), documents: 0, services: new Set() };
-                map.set(code, u);
+                u = {
+                    center: code,
+                    name: (nameRaw || '').trim() || code,
+                    applications: 0,
+                    citizens: new Set(),
+                    documents: 0,
+                    services: new Set()
+                };
+                map.set(key, u);
+            } else if (nameRaw && u.name === u.center) {
+                u.name = String(nameRaw).trim() || u.name;
             }
+            return u;
+        };
+        for (const c of centers) ensure(c.center_code, c.center_name);
+        for (const g of groups) {
+            const u = ensure(g.centerCode);
             u.applications += 1;
             if (g.phone) u.citizens.add(g.phone);
             u.documents += g.docs.length;
@@ -332,13 +363,14 @@ export default function App() {
         return [...map.values()]
             .map(u => ({
                 center: u.center,
+                name: u.name,
                 applications: u.applications,
                 citizens: u.citizens.size,
                 documents: u.documents,
                 services: u.services.size
             }))
             .sort((a, b) => b.applications - a.applications || a.center.localeCompare(b.center));
-    }, [groups]);
+    }, [groups, centers]);
 
     const groupedByService = useMemo(() => {
         const map = new Map();
@@ -569,7 +601,7 @@ export default function App() {
                                     <tbody>
                                         {centerUsage.map(u => (
                                             <tr key={u.center}>
-                                                <td><strong>{u.center}</strong></td>
+                                                <td><strong>{u.name}</strong>{u.name !== u.center && <span className="usage-code"> {u.center}</span>}</td>
                                                 <td>{u.applications}</td>
                                                 <td>{u.citizens}</td>
                                                 <td>{u.documents}</td>
@@ -615,7 +647,7 @@ export default function App() {
                                         key={u.center}
                                         className="ubar-row"
                                         onClick={() => { setService('All'); setQuery(u.center === '—' ? '' : u.center); }}
-                                        title={`${u.center}: ${value} — click to filter the list below`}
+                                        title={`${u.name} (${u.center}): ${value} — click to filter the list below`}
                                     >
                                         <span className="ubar-label">{u.center}</span>
                                         <span className="ubar-track">
